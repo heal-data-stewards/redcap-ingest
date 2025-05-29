@@ -13,38 +13,21 @@ Usage:
         --map map.json \
         --report report.json \
         [--output commands.ops]
-
-Primitives used:
-  EnsureColumn(header)
-  RenameColumn(rawHeader, canonicalHeader)
-  SetVariableName(row, newName)
-  SetFieldType(row, fieldType)
-  SetChoices(row, [(code,label),...])
-  SetSlider(row, min, minLabel, max, maxLabel)
-  SetFormula(row, formula)
-  SetFormat(row, formatString)
-  SetValidation(row, validationType, min, max)
 """
-
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 import pandas as pd
 
-# VAR name sanitization regex
 VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
 
 def sanitize_var(name: str) -> str:
     s = name.strip().lower()
-    # replace invalid chars with underscore
     s = re.sub(r'[^a-z0-9_]', '_', s)
-    # ensure starts with letter
     if not s or not s[0].isalpha():
         s = f"var_{s}"
-    # truncate
     return s[:26]
 
 def load_json(path: Path):
@@ -65,9 +48,9 @@ def main():
     args = p.parse_args()
 
     # load original headers
-    df = pd.read_csv(args.dict_file, dtype=str, keep_default_na=False) \
-         if args.dict_file.lower().endswith('.csv') \
-         else pd.read_excel(args.dict_file, dtype=str).fillna('')
+    df = (pd.read_csv(args.dict_file, dtype=str, keep_default_na=False)
+          if args.dict_file.lower().endswith('.csv')
+          else pd.read_excel(args.dict_file, dtype=str).fillna(''))
     raw_headers = list(df.columns)
 
     # load map and report
@@ -81,7 +64,6 @@ def main():
         cmds.append(f'EnsureColumn("{canon}")')
 
     # 2) Rename raw → canonical where override is false
-    # map.json: { canonical: {fieldname: raw, override: bool} }
     for canon, info in mapping.items():
         raw = info.get("fieldname")
         override = info.get("override", False)
@@ -90,58 +72,56 @@ def main():
 
     # 3) Row-level fixes from report
     for entry in report:
-        row = entry.get("line")  # 1-based sheet line
+        row = entry.get("line")
         inf_type = entry.get("inferred_field_type")
         cfg = entry.get("configuration", {})
 
-        # variable name fix if invalid or duplicate
-        orig_var = entry.get("Variable / Field Name","")
+        orig_var = entry.get("Variable / Field Name", "")
         if not VAR_RE.match(orig_var):
             newvar = sanitize_var(orig_var)
             cmds.append(f'SetVariableName({row}, "{newvar}")')
 
-        # field type
         if inf_type:
             cmds.append(f'SetFieldType({row}, {inf_type})')
 
-        # configuration per type
-        if inf_type in ("radio","checkbox","dropdown"):
-            choices = cfg.get("choices",[])
+        if inf_type in ("radio", "checkbox", "dropdown"):
+            choice_items = cfg.get("choices", [])
             pairs = ",".join(
-                f'("{c}","{l}")' for c,l in choices
+                f'("{item["code"]}","{item["label"]}")'
+                for item in choice_items
             )
             cmds.append(f'SetChoices({row}, [{pairs}])')
 
         elif inf_type == "slider":
+            mn = cfg.get("min")
+            mn_lbl = cfg.get("min_label", "")
+            mx = cfg.get("max")
+            mx_lbl = cfg.get("max_label", "")
             cmds.append(
-                f'SetSlider({row}, {cfg.get("min")}, "{cfg.get("min_label","")}", '
-                f'{cfg.get("max")}, "{cfg.get("max_label","")}")'
+                f'SetSlider({row}, {mn}, "{mn_lbl}", {mx}, "{mx_lbl}")'
             )
 
         elif inf_type == "calc":
-            formula = cfg.get("formula","")
+            formula = cfg.get("formula", "")
             cmds.append(f'SetFormula({row}, "{formula}")')
 
-        elif inf_type in ("date","datetime"):
-            fmt = cfg.get("format","")
+        elif inf_type in ("date", "datetime"):
+            fmt = cfg.get("format", "")
             cmds.append(f'SetFormat({row}, "{fmt}")')
 
         elif inf_type == "text":
-            vt = cfg.get("validation_type","")
-            vmin = cfg.get("min","")
-            vmax = cfg.get("max","")
+            vt = cfg.get("validation_type", "")
+            vmin = cfg.get("min", "")
+            vmax = cfg.get("max", "")
             cmds.append(
                 f'SetValidation({row}, "{vt}", "{vmin}", "{vmax}")'
             )
 
-        # yesno, truefalse, notes, file, descriptive → no extra
-
-    # write output
-    out = Path(args.out_file) if args.out_file else None
-    if out:
-        out.write_text("\n".join(cmds)+"\n", encoding='utf-8')
+    output = "\n".join(cmds) + "\n"
+    if args.out_file:
+        Path(args.out_file).write_text(output, encoding='utf-8')
     else:
-        sys.stdout.write("\n".join(cmds))
+        print(output)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
