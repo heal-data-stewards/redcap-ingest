@@ -1,31 +1,33 @@
-# 1) Ensure that a column exists (add it if missing, blank by default)
-EnsureColumn(canonicalHeader)
+# REDCap Transformation DSL Primitives
 
-# 2) Rename raw header → canonical header
-RenameColumn(rawHeader, canonicalHeader)
+1. `EnsureColumn(header)`  
+   Create a column named `header` if it does not exist.
 
-# 3) Set or correct the variable/field name on a specific row.
-#    Automatically deduplicates by appending “_2”, “_3”, … if needed.
-SetVariableName(rowNumber, newVariableName)
+2. `RenameColumn(rawHeader, canonicalHeader)`  
+   Rename an existing column `rawHeader` to `canonicalHeader`.
 
-# 4) Set the field type on a specific row.
-SetFieldType(rowNumber, fieldType)
-    # fieldType must be one of:
-    #   text, notes, radio, checkbox, dropdown, calc,
-    #   file, yesno, truefalse, slider, descriptive, date, datetime
+3. `SetFormName(rowNumber, formName)`  
+   Populate the **Form Name** column on the given row.
 
-# 5) For multi-choice fields (radio/checkbox/dropdown/calc):
-#    supply a list of (code,label) tuples.
-SetChoices(rowNumber, [ (code1,label1), (code2,label2), … ])
+4. `SetVariableName(rowNumber, newVariableName)`  
+   Set `Variable / Field Name`. Automatically deduplicates by appending `_2`, etc.
 
-# 6) For sliders:
-SetSlider(rowNumber, minValue, minLabel, maxValue, maxLabel)
+5. `SetFieldType(rowNumber, fieldType)`  
+   Set **Field Type**. One of:  
+   `text, notes, radio, checkbox, dropdown, calc, file, yesno, truefalse, slider, descriptive, date, datetime`.
 
-# 7) For calculated fields:
-SetFormula(rowNumber, formulaString)
+6. `SetChoices(rowNumber, [(code,label),…])`  
+   For radio/checkbox/dropdown: fill **Choices, Calculations, OR Slider Labels**.
 
-# 8) For date/datetime fields:
-SetFormat(rowNumber, formatString)
+7. `SetSlider(rowNumber, min, minLabel, max, maxLabel)`  
+   For slider: set numeric range and labels in **Choices, Calculations, OR Slider Labels**.
 
-# 9) For text fields:
-SetValidation(rowNumber, validationType, validationMin, validationMax)
+8. `SetFormula(rowNumber, formulaString)`  
+   For calc fields: store the REDCap formula in **Choices, Calculations, OR Slider Labels**.
+
+9. `SetFormat(rowNumber, formatString)`  
+   For date/datetime: set format in **Text Validation Type OR Show Slider Number**.
+
+10. `SetValidation(rowNumber, type, min, max)`  
+    For text: set validation parameters in  
+    **Text Validation Type OR Show Slider Number**, **Text Validation Min**, **Text Validation Max**.

@@ -24,7 +24,6 @@ import pandas as pd
 
 VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
 
-
 def parse_args():
     p = argparse.ArgumentParser(description="Apply DSL operations to REDCap dictionary")
     p.add_argument('--dict',    required=True, help='Original REDCap dictionary file')
@@ -33,20 +32,21 @@ def parse_args():
     p.add_argument('--output',  required=True, help='Output corrected dictionary file')
     return p.parse_args()
 
-
 def load_df(path: Path):
     if path.suffix.lower() == '.csv':
         return pd.read_csv(path, dtype=str, keep_default_na=False)
-    else:
-        return pd.read_excel(path, dtype=str).fillna('')
-
+    return pd.read_excel(path, dtype=str).fillna('')
 
 def write_df(df: pd.DataFrame, path: Path):
-    if path.suffix.lower() == '.csv':
+    suffix = path.suffix.lower()
+    if suffix == '.csv':
         df.to_csv(path, index=False)
+    elif suffix in ('.xls', '.xlsx'):
+        # explicit writer so openpyxl saves cleanly
+        with pd.ExcelWriter(path, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
     else:
-        df.to_excel(path, index=False)
-
+        raise ValueError(f"Unsupported output format: {suffix}")
 
 class DSLExecutor:
     def __init__(self, df: pd.DataFrame):
@@ -63,6 +63,12 @@ class DSLExecutor:
     def RenameColumn(self, raw, canon):
         if raw in self.df.columns and raw != canon:
             self.df.rename(columns={raw: canon}, inplace=True)
+
+    def SetFormName(self, row, formname):
+        idx = row - 2
+        col = 'Form Name'
+        self.EnsureColumn(col)
+        self.df.at[idx, col] = formname
 
     def SetVariableName(self, row, newname):
         idx = row - 2
@@ -113,54 +119,52 @@ class DSLExecutor:
         self.df.at[idx, c2] = vmin
         self.df.at[idx, c3] = vmax
 
+def parse_call(line: str):
+    expr = ast.parse(line, mode='eval').body
+    if not isinstance(expr, ast.Call):
+        raise ValueError(f"Not a call: {line}")
+    name = expr.func.id
+    args = []
+    for a in expr.args:
+        if isinstance(a, ast.Constant):
+            args.append(a.value)
+        elif isinstance(a, ast.Name):
+            # bareword → string
+            args.append(a.id)
+        else:
+            args.append(ast.literal_eval(a))
+    return name, args
 
 def main():
     args = parse_args()
     df = load_df(Path(args.dict))
 
-    # 1) apply map.json renames
+    # apply map.json renames
     mapping = json.loads(Path(args.map).read_text(encoding='utf-8'))
     for canon, info in mapping.items():
         raw = info.get('fieldname')
-        override = info.get('override', False)
-        if not override and raw and raw in df.columns:
+        if not info.get('override', False) and raw in df.columns:
             df.rename(columns={raw: canon}, inplace=True)
 
     executor = DSLExecutor(df)
 
-    # 2) execute DSL ops via AST parsing
-    for line in Path(args.ops).read_text(encoding='utf-8').splitlines():
-        txt = line.strip()
-        if not txt or txt.startswith('#'):
+    for raw in Path(args.ops).read_text(encoding='utf-8').splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#'):
             continue
         try:
-            expr = ast.parse(txt, mode='eval').body
-            if not isinstance(expr, ast.Call):
-                raise ValueError
+            cmd, params = parse_call(line)
         except Exception:
-            print(f"Skipping unrecognized line: {txt}", file=sys.stderr)
+            print(f"Skipping invalid DSL line: {line}", file=sys.stderr)
             continue
-        cmd = expr.func.id
-        args_list = []
-        for a in expr.args:
-            if isinstance(a, ast.Constant):
-                args_list.append(a.value)
-            elif isinstance(a, (ast.List, ast.Tuple, ast.Dict)):
-                args_list.append(ast.literal_eval(a))
-            elif isinstance(a, ast.Name):
-                args_list.append(a.id)
-            else:
-                args_list.append(ast.literal_eval(a))
         fn = getattr(executor, cmd, None)
         if not fn:
             print(f"Unknown primitive: {cmd}", file=sys.stderr)
             continue
-        fn(*args_list)
+        fn(*params)
 
-    # 3) write corrected dictionary
     write_df(executor.df, Path(args.output))
     print(f"Wrote corrected dictionary to {args.output}")
-
 
 if __name__ == '__main__':
     main()
