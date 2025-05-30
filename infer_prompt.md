@@ -69,7 +69,7 @@ For each entry in `report.json`:
    - **text**
      ```json
      "configuration": {
-       "validation_type": "<Text Validation Type OR Show Slider
+       "validation_type": "<Text Validation Type or Show Slider
        Number>",
        "min": "<Text Validation Min>",
        "max": "<Text Validation Max>"
@@ -90,6 +90,9 @@ For each entry in `report.json`:
 ## Rules
 
 - Always fix rows where `"classification.valid"` is `false`.
+- If `Choices, Calculations, OR Slider Labels` contains exactly two
+  code/label pairs and the labels (case-insensitive) are “yes” and “no”,
+  infer `yesno` rather than `radio`.
 - Parse `"Choices, Calculations, OR Slider Labels"` into structured
   code/label pairs for choice-based types.
 - Derive numeric min/max and labels for sliders from that same string.
