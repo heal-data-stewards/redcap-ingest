@@ -69,8 +69,7 @@ For each entry in `report.json`:
    - **text**
      ```json
      "configuration": {
-       "validation_type": "<Text Validation Type or Show Slider
-       Number>",
+       "validation_type": "<Text Validation Type or Show Slider Number>",
        "min": "<Text Validation Min>",
        "max": "<Text Validation Max>"
      }
@@ -91,8 +90,11 @@ For each entry in `report.json`:
 
 - Always fix rows where `"classification.valid"` is `false`.
 - If `Choices, Calculations, OR Slider Labels` contains exactly two
-  code/label pairs and the labels (case-insensitive) are “yes” and “no”,
-  infer `yesno` rather than `radio`.
+  code/label pairs, and the **labels** are case-insensitive **“yes”** and
+  **“no”** **and** the question is clearly boolean, infer `yesno`.
+- If there are two choices but the question does **not** present a direct
+  boolean (e.g. “Benefit offered” vs “Benefit not offered”), infer
+  `radio` instead of `yesno`.
 - Parse `"Choices, Calculations, OR Slider Labels"` into structured
   code/label pairs for choice-based types.
 - Derive numeric min/max and labels for sliders from that same string.
