@@ -40,22 +40,23 @@ For each entry in `report.json`:
      "configuration": {}
      ```
    - **yesno** when any of these is true:
-     1. `Choices…` has exactly two pairs with labels yes/no (case-insensitive).
-     2. `Choices…` is empty but `Field Label` is a yes/no question:
+     1. `Choices…` has exactly two pairs with labels yes/no (case-
+        insensitive).
+     2. `Choices…` is empty and `Field Label` is a yes/no question:
         starts with or contains interrogatives such as “Have you”,
         “Did you”, “Do you”, “Is”, “Are”, “Was”, “Were”, “Check if”.
      ```json
      "configuration": [
-       {"code":"1","label":"Yes"},
-       {"code":"0","label":"No"}
+       { "code": "1", "label": "Yes" },
+       { "code": "0", "label": "No" }
      ]
      ```
    - **radio**, **checkbox**, **dropdown**
      ```json
      "configuration": {
        "choices": [
-         {"code":"<code1>","label":"<label1>"},
-         {"code":"<code2>","label":"<label2>"},
+         { "code": "<code1>", "label": "<label1>" },
+         { "code": "<code2>", "label": "<label2>" },
          …
        ]
      }
@@ -63,41 +64,46 @@ For each entry in `report.json`:
    - **slider**
      ```json
      "configuration": {
-       "min":<numeric_min>,"min_label":"<label_for_min>",
-       "max":<numeric_max>,"max_label":"<label_for_max>"
+       "min": <numeric_min>, "min_label": "<label_for_min>",
+       "max": <numeric_max>, "max_label": "<label_for_max>"
      }
      ```
    - **calc**
      ```json
      "configuration": {
-       "formula":"<REDCap_formula_string>"
+       "formula": "<REDCap_formula_string>"
      }
      ```
    - **date** or **datetime**
      ```json
      "configuration": {
-       "format":"<expected_format_string>"
+       "format": "<expected_format_string>"
      }
      ```
    - **text**
      ```json
      "configuration": {
-       "validation_type":"<Text Validation Type or Show Slider Number>",
-       "min":"<Text Validation Min>","max":"<Text Validation Max>"
+       "validation_type": "<Text Validation Type or Show Slider Number>",
+       "min": "<Text Validation Min>", "max": "<Text Validation Max>"
      }
      ```
 
 3. **Produce** a JSON array of the same length, where each element is the
    original object plus these new keys:
    ```json
-   "inferred_field_type":"<one of the 13 canonical types>",
-   "configuration":<appropriate object or array>
+   "inferred_field_type": "<one of the 13 canonical types>",
+   "configuration": <appropriate object or array>
    ```
 
 ## Rules
 
 - Always fix rows where `"classification.valid"` is `false`.
-- Follow the **yesno** rules above to infer a boolean field type.
+- If `Choices…` has exactly two code/label pairs with labels yes/no,
+  infer `yesno` and structure its configuration.
+- If `Choices…` is empty and `Field Label` is a yes/no question,
+  infer `yesno` and populate default yes/no configuration.
+- If `Field Label` is a yes/no question but `Choices…` exists and its
+  labels are not strictly yes/no, infer `radio` and list choices.
 - If `Choices…` has two non-boolean options, infer `radio`.
 - Parse `Choices…` into structured arrays for choice-based types.
 - Derive slider min/max and labels into `configuration`.
