@@ -1,5 +1,28 @@
 #!/usr/bin/env python3
+"""
+infer_submit.py
 
+Submits a REDCap field‐type inference prompt (with map.json and report.json)
+to the OpenAI API, handling multi‐chunk responses, stripping any Markdown
+fences, parsing each chunk as JSON, concatenating them into a single JSON array,
+and pretty‐printing the result.
+
+Usage:
+    python infer_submit.py [options]
+
+Options:
+    --model         Model name (default: gpt-4o-mini)
+    --max-tokens    Max tokens for the completion (default: 2000)
+    --chunks        Number of report.json chunks (1 = no split)
+    --dry-run       Only calculate token usage; do not call the API
+    --prompt        Path to prompt markdown file (default: infer_prompt.md)
+    --reference     Path to REDCap definition markdown (default: redcap_reference.md)
+    --map           Path to map.json (default: map.json)
+    --report        Path to report.json (default: report.json)
+    --config        Path to config JSON with {"api_key": "..."} (default: infer_config.json)
+    --output        Path to write the concatenated JSON array (default: stdout)
+    --log-level     Logging verbosity (default: info)
+"""
 import argparse
 import json
 import logging
@@ -14,22 +37,14 @@ from quota_utils import summarize_usage
 
 # ─── Model context windows ─────────────────────────────────────────────────────
 MODEL_CONTEXT = {
-    # GPT-4.1 family (all three support up to 1 000 000 tokens)
     "gpt-4.1":        1_000_000,
     "gpt-4.1-mini":   1_000_000,
-    "gpt-4.1-nano":   1_000_000,       # :contentReference[oaicite:0]{index=0}
-
-    # GPT-4 API versions
-    "gpt-4":          8_192,           # :contentReference[oaicite:1]{index=1}
-    "gpt-4-32k":     32_768,           # :contentReference[oaicite:2]{index=2}
-
-    # GPT-4o mini (same 128 k window as GPT-4o turbo) 
-    "gpt-4o-mini":  128_000,           # :contentReference[oaicite:3]{index=3}
-
-    # GPT-3.5 Turbo defaults to 16 k context now
-    "gpt-3.5-turbo": 16_384,           # :contentReference[oaicite:4]{index=4}
-    # if you want the explicit 16k variant
-    "gpt-3.5-turbo-16k": 16_384,       # :contentReference[oaicite:5]{index=5}
+    "gpt-4.1-nano":   1_000_000,
+    "gpt-4":          8_192,
+    "gpt-4-32k":     32_768,
+    "gpt-4o-mini":  128_000,
+    "gpt-3.5-turbo": 16_384,
+    "gpt-3.5-turbo-16k": 16_384,
 }
 
 def parse_args():
@@ -65,7 +80,7 @@ def parse_args():
     p.add_argument("--config",    default="infer_config.json",
                    help="Path to config JSON containing {\"api_key\": \"...\"}")
     p.add_argument("--output",
-                   help="Path to write the model's output (default: stdout)")
+                   help="Path to write the concatenated JSON array (default: stdout)")
     return p.parse_args()
 
 def configure_logging(level: str):
@@ -80,19 +95,19 @@ def configure_logging(level: str):
 
 def load_files(args):
     paths = {
-        "prompt":   Path(args.prompt),
-        "reference":Path(args.reference),
-        "map":      Path(args.map_file),
-        "report":   Path(args.report),
-        "config":   Path(args.config),
+        "prompt":    Path(args.prompt),
+        "reference": Path(args.reference),
+        "map":       Path(args.map_file),
+        "report":    Path(args.report),
+        "config":    Path(args.config),
     }
-    missing = [name for name,p in paths.items() if not p.is_file()]
+    missing = [name for name, p in paths.items() if not p.is_file()]
     if missing:
         for name in missing:
             logging.error(f"{name} file not found: {paths[name]}")
         sys.exit(1)
 
-    texts = {k: p.read_text(encoding="utf-8") for k,p in paths.items()}
+    texts = {k: p.read_text(encoding="utf-8") for k, p in paths.items()}
     cfg = json.loads(texts.pop("config"))
     api_key = cfg.get("api_key")
     if not api_key:
@@ -107,11 +122,7 @@ def make_http_client():
         logging.debug(f"→ {r.method} {r.url}  body={size} bytes")
 
     def log_res(r: httpx.Response):
-        # Prefer the Content-Length header
-        length = r.headers.get("content-length")
-        if length is None:
-            # We don’t want to read the body, so if the header’s absent just say “unknown”
-            length = "unknown"
+        length = r.headers.get("content-length") or "unknown"
         logging.debug(f"← {r.status_code} {r.reason_phrase}  body={length} bytes")
 
     return httpx.Client(
@@ -133,24 +144,32 @@ def report_budget(name, in_tokens, out_tokens, ctx_limit):
 def split_into_chunks(lst, n):
     if n <= 1:
         return [lst]
-    size = -(-len(lst) // n)  # ceil division
+    size = -(-len(lst) // n)
     return [lst[i:i+size] for i in range(0, len(lst), size)]
 
 def suggest_models(needed_tokens: int):
-    """
-    Print model suggestions that can support the given token requirement.
-    """
     candidates = [(name, ctx) for name, ctx in MODEL_CONTEXT.items() if ctx >= needed_tokens]
     if candidates:
         candidates.sort(key=lambda x: x[1])
         suggestions = ", ".join(f"{name} ({ctx} tokens)" for name, ctx in candidates)
         print(f"\nSuggestion: To handle {needed_tokens} tokens, consider one of: {suggestions}")
     else:
-        print(f"\nNo available model in MODEL_CONTEXT can handle {needed_tokens} tokens. "
-              "Consider reducing your prompt, increasing --chunks, or adding support for a larger-context model.")
+        print(f"\nNo available model can handle {needed_tokens} tokens. "
+              "Consider reducing your prompt, increasing --chunks, or using a larger-context model.")
+
+def strip_markdown_fences(text: str) -> str:
+    """
+    Remove leading/trailing triple-backtick fences (``` or ```json) from a block of text.
+    """
+    lines = text.strip().splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
 
 def check_and_report_budget(args, shared_in, report_in, report_text):
-    ctx = MODEL_CONTEXT[args.model]
+    ctx = MODEL_CONTEXT.get(args.model, 0)
     max_out = args.max_tokens
 
     if args.chunks <= 1:
@@ -203,7 +222,7 @@ def call_openai(client, model, messages, max_tokens):
         if "insufficient_quota" in err or "429" in err:
             logging.error("OpenAI API quota exceeded.")
             try:
-                start, end, usage = summarize_usage(api_key)
+                start, end, usage = summarize_usage(client.api_key)
                 logging.error(f"Usage from {start} to {end}: {usage}")
             except Exception as qe:
                 logging.error(f"Additionally, failed to fetch usage summary: {qe}")
@@ -220,25 +239,42 @@ def call_openai(client, model, messages, max_tokens):
     return choice.message.content
 
 def process_submissions(args, client, prompt, reference, map_text, report_text):
+    """
+    For each chunk, strip fences, parse JSON, and collect into a single list.
+    If any chunk fails JSON parsing, exit with an error.
+    """
     entries = json.loads(report_text)
     shared = build_shared_messages(prompt, reference, map_text)
-    outputs = []
+    combined = []
 
     for chunk in split_into_chunks(entries, args.chunks):
         body = json.dumps(chunk)
         msgs = shared + [
             {"role": "user", "content": "### report.json chunk:\n" + body},
         ]
-        outputs.append(
-            call_openai(
-                client=client,
-                model=args.model,
-                messages=msgs,
-                max_tokens=args.max_tokens
-            )
+        raw_output = call_openai(
+            client=client,
+            model=args.model,
+            messages=msgs,
+            max_tokens=args.max_tokens
         )
+        clean_text = strip_markdown_fences(raw_output)
+        try:
+            parsed = json.loads(clean_text)
+        except json.JSONDecodeError as e:
+            logging.error("Failed to parse JSON from model response:")
+            logging.error(clean_text)
+            logging.error(f"JSONDecodeError: {e}")
+            sys.exit(1)
 
-    return "\n".join(outputs)
+        if not isinstance(parsed, list):
+            logging.error("Expected a JSON array, but got:")
+            logging.error(parsed)
+            sys.exit(1)
+
+        combined.extend(parsed)
+
+    return combined
 
 def main():
     args = parse_args()
@@ -252,15 +288,17 @@ def main():
 
     check_and_report_budget(args, shared_in, report_in, report_text)
 
-    result = process_submissions(
+    combined_results = process_submissions(
         args, client, prompt, reference, map_text, report_text
     )
 
+    # Pretty-print JSON output
+    output_json = json.dumps(combined_results, indent=2)
     if args.output:
-        Path(args.output).write_text(result, encoding="utf-8")
-        print(f"DSL script written to {args.output}")
+        Path(args.output).write_text(output_json, encoding="utf-8")
+        print(f"Pretty-printed JSON output written to {args.output}")
     else:
-        print(result)
+        print(output_json)
 
 if __name__ == "__main__":
     main()
