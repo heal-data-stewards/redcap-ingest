@@ -5,7 +5,7 @@ generate_dsl.py
 Reads the original REDCap dictionary, a map.json, and an augmented report.json
 (with inferred_field_type and configuration), and emits a sequence of
 primitive DSL commands to transform the original into a fully compliant REDCap
-dictionary, including populating the Form Name column.
+dictionary, including populating default yes/no choices when needed.
 
 Usage:
     python generate_dsl.py \
@@ -13,18 +13,6 @@ Usage:
         --map map.json \
         --report report.json \
         [--output commands.ops]
-
-Primitives used:
-  EnsureColumn(header)
-  RenameColumn(rawHeader, canonicalHeader)
-  SetFormName(rowNumber, formName)
-  SetVariableName(rowNumber, newVariableName)
-  SetFieldType(rowNumber, fieldType)
-  SetChoices(rowNumber, [(code,label),...])
-  SetSlider(rowNumber, min, minLabel, max, maxLabel)
-  SetFormula(rowNumber, formulaString)
-  SetFormat(rowNumber, formatString)
-  SetValidation(rowNumber, validationType, min, max)
 """
 import argparse
 import json
@@ -60,14 +48,14 @@ def main():
                         help='where to write DSL commands (default stdout)')
     args = parser.parse_args()
 
-    # load DataFrame to know row count and raw headers
+    # Load DataFrame to know raw headers
     if args.dict_file.lower().endswith('.csv'):
         df = pd.read_csv(args.dict_file, dtype=str, keep_default_na=False)
     else:
         df = pd.read_excel(args.dict_file, dtype=str).fillna('')
     raw_headers = list(df.columns)
-    row_count = len(df)
 
+    # Load map.json and report.json
     mapping = load_json(Path(args.map_file))
     report  = load_json(Path(args.report_file))
 
@@ -88,8 +76,7 @@ def main():
     form_info = mapping.get("Form Name", {})
     if form_info.get("override"):
         form_value = form_info.get("fieldname", "")
-        # apply to every data row (rows start at line 2)
-        for row in range(2, row_count + 2):
+        for row in range(2, len(df) + 2):
             cmds.append(f'SetFormName({row}, "{form_value}")')
 
     # 4) Row-level fixes from report
@@ -98,25 +85,35 @@ def main():
         inf_type = entry.get("inferred_field_type")
         cfg = entry.get("configuration", {})
 
-        # variable name correction
+        # 4a) Variable name correction
         orig_var = entry.get("Variable / Field Name", "")
         if not VAR_RE.match(orig_var):
             newvar = sanitize_var(orig_var)
             cmds.append(f'SetVariableName({row}, "{newvar}")')
 
-        # field type
+        # 4b) Field type
         if inf_type:
             cmds.append(f'SetFieldType({row}, {inf_type})')
 
-        # configuration
-        if inf_type in ("radio", "checkbox", "dropdown"):
-            choice_items = cfg.get("choices", [])
+        # 4c) Configuration for yesno/truefalse
+        if inf_type in ("yesno", "truefalse"):
+            # config may be list of choices
+            choices = cfg if isinstance(cfg, list) else []
+            if not choices:
+                # default yes/no
+                choices = [{"code":"1","label":"Yes"}, {"code":"0","label":"No"}]
+            pairs = ",".join(f'("{c["code"]}","{c["label"]}")' for c in choices)
+            cmds.append(f'SetChoices({row}, [{pairs}])')
+
+        # 4d) Configuration for radio/checkbox/dropdown
+        elif inf_type in ("radio", "checkbox", "dropdown"):
+            choices = cfg.get("choices", [])
             pairs = ",".join(
-                f'("{item["code"]}","{item["label"]}")'
-                for item in choice_items
+                f'("{item["code"]}","{item["label"]}")' for item in choices
             )
             cmds.append(f'SetChoices({row}, [{pairs}])')
 
+        # 4e) Slider
         elif inf_type == "slider":
             mn     = cfg.get("min")
             mn_lbl = cfg.get("min_label", "")
@@ -126,14 +123,17 @@ def main():
                 f'SetSlider({row}, {mn}, "{mn_lbl}", {mx}, "{mx_lbl}")'
             )
 
+        # 4f) Calc
         elif inf_type == "calc":
             formula = cfg.get("formula", "")
             cmds.append(f'SetFormula({row}, "{formula}")')
 
+        # 4g) Date/datetime
         elif inf_type in ("date", "datetime"):
             fmt = cfg.get("format", "")
             cmds.append(f'SetFormat({row}, "{fmt}")')
 
+        # 4h) Text
         elif inf_type == "text":
             vt   = cfg.get("validation_type", "")
             vmin = cfg.get("min", "")

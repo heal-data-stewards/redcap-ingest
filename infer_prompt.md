@@ -33,14 +33,29 @@ For each entry in `report.json`:
    yesno, truefalse, slider, descriptive, date, datetime
    ```
 
-2. **Extract** and **structure** any **configuration** details needed to
-   fully define that field type:
+2. **Extract** and **structure** a **configuration** object for each:
+   - Always include a `"configuration"` property (never omit it).
+   - **yesno**, **truefalse**, **notes**, **file**, **descriptive**
+     ```json
+     "configuration": {}
+     ```
+   - **yesno** when any of these is true:
+     1. `Choices…` has exactly two pairs with labels yes/no (case-insensitive).
+     2. `Choices…` is empty but `Field Label` is a yes/no question:
+        starts with or contains interrogatives such as “Have you”,
+        “Did you”, “Do you”, “Is”, “Are”, “Was”, “Were”, “Check if”.
+     ```json
+     "configuration": [
+       {"code":"1","label":"Yes"},
+       {"code":"0","label":"No"}
+     ]
+     ```
    - **radio**, **checkbox**, **dropdown**
      ```json
      "configuration": {
        "choices": [
-         { "code": "<code1>", "label": "<label1>" },
-         { "code": "<code2>", "label": "<label2>" },
+         {"code":"<code1>","label":"<label1>"},
+         {"code":"<code2>","label":"<label2>"},
          …
        ]
      }
@@ -48,57 +63,45 @@ For each entry in `report.json`:
    - **slider**
      ```json
      "configuration": {
-       "min": <numeric_min>,
-       "min_label": "<label_for_min>",
-       "max": <numeric_max>,
-       "max_label": "<label_for_max>"
+       "min":<numeric_min>,"min_label":"<label_for_min>",
+       "max":<numeric_max>,"max_label":"<label_for_max>"
      }
      ```
    - **calc**
      ```json
      "configuration": {
-       "formula": "<REDCap_formula_string>"
+       "formula":"<REDCap_formula_string>"
      }
      ```
    - **date** or **datetime**
      ```json
      "configuration": {
-       "format": "<expected_format_string>"
+       "format":"<expected_format_string>"
      }
      ```
    - **text**
      ```json
      "configuration": {
-       "validation_type": "<Text Validation Type or Show Slider Number>",
-       "min": "<Text Validation Min>",
-       "max": "<Text Validation Max>"
+       "validation_type":"<Text Validation Type or Show Slider Number>",
+       "min":"<Text Validation Min>","max":"<Text Validation Max>"
      }
-     ```
-   - **yesno**, **truefalse**, **notes**, **file**, **descriptive**
-     ```json
-     "configuration": {}
      ```
 
 3. **Produce** a JSON array of the same length, where each element is the
    original object plus these new keys:
    ```json
-   "inferred_field_type": "<one of the 13 canonical types>",
-   "configuration": { … }
+   "inferred_field_type":"<one of the 13 canonical types>",
+   "configuration":<appropriate object or array>
    ```
 
 ## Rules
 
 - Always fix rows where `"classification.valid"` is `false`.
-- If `Choices, Calculations, OR Slider Labels` contains exactly two
-  code/label pairs, and the **labels** are case-insensitive **“yes”** and
-  **“no”** **and** the question is clearly boolean, infer `yesno`.
-- If there are two choices but the question does **not** present a direct
-  boolean (e.g. “Benefit offered” vs “Benefit not offered”), infer
-  `radio` instead of `yesno`.
-- Parse `"Choices, Calculations, OR Slider Labels"` into structured
-  code/label pairs for choice-based types.
-- Derive numeric min/max and labels for sliders from that same string.
-- Extract any REDCap formulas for `calc` types.
-- Infer date/datetime formats from label or context (e.g. `YYYY-MM-DD`).
-- Default to `"text"` with empty configuration when in doubt.
+- Follow the **yesno** rules above to infer a boolean field type.
+- If `Choices…` has two non-boolean options, infer `radio`.
+- Parse `Choices…` into structured arrays for choice-based types.
+- Derive slider min/max and labels into `configuration`.
+- Extract calc formulas into `configuration`.
+- Infer date/datetime formats into `configuration`.
+- Default to `text` with empty configuration when in doubt.
 - Return **only** the JSON array (no additional explanation).
