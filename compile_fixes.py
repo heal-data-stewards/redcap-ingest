@@ -141,6 +141,8 @@ def main():
             cmds.append(
                 f'SetValidation({row}, "{vt}", "{vmin}", "{vmax}")'
             )
+            # Clear only the Choices column when field type is text
+            cmds.append(f'ClearCell({row}, "Choices, Calculations, OR Slider Labels")')
 
     output = "\n".join(cmds) + "\n"
     if args.out_file:

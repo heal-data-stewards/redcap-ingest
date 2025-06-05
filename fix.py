@@ -3,8 +3,8 @@
 apply_dsl.py
 
 Reads an original REDCap dictionary (.csv/.xlsx), a map.json, and a DSL
-operations file, executes the primitives (after renaming raw→canonical
-with the map), and writes out a fully compliant REDCap dictionary.
+operations file, executes the primitives (including ClearCell()), and writes
+out a fully compliant REDCap dictionary.
 
 Usage:
     python apply_dsl.py \
@@ -42,7 +42,6 @@ def write_df(df: pd.DataFrame, path: Path):
     if suffix == '.csv':
         df.to_csv(path, index=False)
     elif suffix in ('.xls', '.xlsx'):
-        # explicit writer so openpyxl saves cleanly
         with pd.ExcelWriter(path, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
     else:
@@ -65,59 +64,73 @@ class DSLExecutor:
             self.df.rename(columns={raw: canon}, inplace=True)
 
     def SetFormName(self, row, formname):
-        idx = row - 2
+        idx = int(row) - 2
         col = 'Form Name'
         self.EnsureColumn(col)
-        self.df.at[idx, col] = formname
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = formname
 
     def SetVariableName(self, row, newname):
-        idx = row - 2
-        base, suffix = newname, 2
-        candidate = newname
-        while candidate in self.seen_vars:
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        self.df.at[idx, 'Variable / Field Name'] = candidate
-        self.seen_vars.add(candidate)
+        idx = int(row) - 2
+        if 0 <= idx < len(self.df):
+            base, suffix = newname, 2
+            candidate = newname
+            while candidate in self.seen_vars:
+                candidate = f"{base}_{suffix}"
+                suffix += 1
+            self.df.at[idx, 'Variable / Field Name'] = candidate
+            self.seen_vars.add(candidate)
 
     def SetFieldType(self, row, ftype):
-        idx = row - 2
-        self.df.at[idx, 'Field Type'] = ftype
+        idx = int(row) - 2
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, 'Field Type'] = ftype
 
     def SetChoices(self, row, choices):
-        idx = row - 2
+        idx = int(row) - 2
         col = 'Choices, Calculations, OR Slider Labels'
         self.EnsureColumn(col)
-        self.df.at[idx, col] = ' | '.join(f"{c},{l}" for c, l in choices)
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = ' | '.join(f"{c},{l}" for c, l in choices)
 
     def SetSlider(self, row, mn, mn_lbl, mx, mx_lbl):
-        idx = row - 2
+        idx = int(row) - 2
         col = 'Choices, Calculations, OR Slider Labels'
         self.EnsureColumn(col)
-        self.df.at[idx, col] = f"{mn},{mn_lbl} | {mx},{mx_lbl}"
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = f"{mn},{mn_lbl} | {mx},{mx_lbl}"
 
     def SetFormula(self, row, formula):
-        idx = row - 2
+        idx = int(row) - 2
         col = 'Choices, Calculations, OR Slider Labels'
         self.EnsureColumn(col)
-        self.df.at[idx, col] = formula
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = formula
 
     def SetFormat(self, row, fmt):
-        idx = row - 2
+        idx = int(row) - 2
         col = 'Text Validation Type OR Show Slider Number'
         self.EnsureColumn(col)
-        self.df.at[idx, col] = fmt
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = fmt
 
     def SetValidation(self, row, vtype, vmin, vmax):
-        idx = row - 2
+        idx = int(row) - 2
         c1 = 'Text Validation Type OR Show Slider Number'
         c2 = 'Text Validation Min'
         c3 = 'Text Validation Max'
         for c in (c1, c2, c3):
             self.EnsureColumn(c)
-        self.df.at[idx, c1] = vtype
-        self.df.at[idx, c2] = vmin
-        self.df.at[idx, c3] = vmax
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, c1] = vtype
+            self.df.at[idx, c2] = vmin
+            self.df.at[idx, c3] = vmax
+
+    def ClearCell(self, row, col):
+        idx = int(row) - 2
+        self.EnsureColumn(col)
+        if 0 <= idx < len(self.df):
+            self.df.at[idx, col] = ''
 
 def parse_call(line: str):
     expr = ast.parse(line, mode='eval').body
@@ -129,7 +142,6 @@ def parse_call(line: str):
         if isinstance(a, ast.Constant):
             args.append(a.value)
         elif isinstance(a, ast.Name):
-            # bareword → string
             args.append(a.id)
         else:
             args.append(ast.literal_eval(a))
