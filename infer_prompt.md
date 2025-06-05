@@ -40,11 +40,11 @@ For each entry in `report.json`:
      "configuration": {}
      ```
    - **yesno** when any of these is true:
-     1. `Choices…` has exactly two pairs with labels yes/no (case-
-        insensitive).
-     2. `Choices…` is empty and `Field Label` is a yes/no question:
-        starts with or contains interrogatives such as “Have you”,
-        “Did you”, “Do you”, “Is”, “Are”, “Was”, “Were”, “Check if”.
+     1. `"Choices, Calculations, OR Slider Labels"` has exactly two
+        pairs with labels yes/no (case-insensitive).
+     2. `"Choices, Calculations, OR Slider Labels"` is empty and
+        `Field Label` poses a question that would be answered
+        with a "yes" or "no".
      ```json
      "configuration": [
        { "code": "1", "label": "Yes" },
@@ -98,16 +98,22 @@ For each entry in `report.json`:
 ## Rules
 
 - Always fix rows where `"classification.valid"` is `false`.
-- If `Choices…` has exactly two code/label pairs with labels yes/no,
-  infer `yesno` and structure its configuration.
-- If `Choices…` is empty and `Field Label` is a yes/no question,
-  infer `yesno` and populate default yes/no configuration.
-- If `Field Label` is a yes/no question but `Choices…` exists and its
-  labels are not strictly yes/no, infer `radio` and list choices.
-- If `Choices…` has two non-boolean options, infer `radio`.
-- Parse `Choices…` into structured arrays for choice-based types.
+- If `"Choices, Calculations, OR Slider Labels"` has exactly two
+  code/label pairs with labels yes/no, infer `yesno` and structure
+  its configuration.
+- If `"Choices, Calculations, OR Slider Labels"` is empty and
+  `Field Label` poses a question that would be answered with a
+  "yes" or "no", infer `yesno` and populate default yes/no
+  configuration.
+- If `Field Label` poses a yes/no question but
+  `"Choices, Calculations, OR Slider Labels"` exists with labels not
+  strictly yes/no, infer `radio` and list choices.
+- If `"Choices, Calculations, OR Slider Labels"` has two non-boolean
+  options, infer `radio`.
+- Parse `"Choices, Calculations, OR Slider Labels"` into structured
+  arrays for choice-based types.
 - Derive slider min/max and labels into `configuration`.
 - Extract calc formulas into `configuration`.
 - Infer date/datetime formats into `configuration`.
-- Default to `text` with empty configuration when in doubt.
+- If none of the above rules apply, assume text.
 - Return **only** the JSON array (no additional explanation).
