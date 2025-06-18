@@ -19,7 +19,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Union, Any
+from typing import Dict, List, Union, Any, Set
 
 import pandas as pd
 
@@ -75,6 +75,14 @@ SYNONYM: Dict[str, str] = {
     "validation":      "Text Validation Type OR Show Slider Number",
 }
 
+# Known REDCap validation types for “Text Validation Type OR Show Slider Number”
+_VALIDATION_TYPES: Set[str] = {
+    "integer", "number", "date_mdy", "date_dmy", "time",
+    "datetime_mdy", "datetime_dmy", "email", "phone"
+}
+# Binary yes/no fields
+_YN = {"y", "n", "yes", "no", "true", "false"}
+
 def normalise(name: str) -> str:
     return re.sub(r"\W+", "", name).lower()
 
@@ -107,11 +115,90 @@ def score_label(name: str, s: pd.Series) -> float:
     base = 0 if non.empty else non.str.contains(r"\s").mean()
     return base + (0.25 if "label" in name.lower() else 0)
 
+def score_section_header(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    # free-form text, likely contains spaces
+    return non.str.contains(r"\s").mean()
+
+def score_choices(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    # REDCap choices almost always use pipes (“|”) between options
+    return non.str.contains(r"\|").mean()
+
+def score_field_note(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    # notes tend to be longer free-text
+    return non.str.len().gt(20).mean()
+
+def score_text_validation_type(s: pd.Series) -> float:
+    non = s[s != ""].str.lower()
+    if non.empty: return 0.0
+    return non.isin(_VALIDATION_TYPES).mean()
+
+def score_text_validation_min(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    return non.str.match(r"^-?\d+(\.\d+)?$").mean()
+
+def score_text_validation_max(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    return non.str.match(r"^-?\d+(\.\d+)?$").mean()
+
+def score_identifier(s: pd.Series) -> float:
+    non = s[s != ""].str.lower()
+    if non.empty: return 0.0
+    return non.isin(_YN).mean()
+
+def score_branching_logic(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    # looks for [var_name] or logical operators
+    return non.str.contains(r"\[.*\]").mean()
+
+def score_required_field(s: pd.Series) -> float:
+    # same pattern as Identifier?
+    return score_identifier(s)
+
+def score_custom_alignment(s: pd.Series) -> float:
+    non = s[s != ""].str.upper()
+    if non.empty: return 0.0
+    return non.isin({"L","C","R","LEFT","CENTER","RIGHT"}).mean()
+
+def score_question_number(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    return non.str.match(r"^\d+(\.\d+)?$").mean()
+
+def score_field_annotation(s: pd.Series) -> float:
+    non = s[s != ""]
+    if non.empty: return 0.0
+    # REDCap annotations often start with “@”
+    return non.str.startswith("@").mean()
+
+# ────────────────────── Extend your DETECT map to cover all headers ───────────────────────
 DETECT: Dict[str, Any] = {
-    "Variable / Field Name": score_var,
-    "Form Name":             score_form,
-    "Field Type":            score_type,
-    "Field Label":           score_label,
+    # your existing four
+    "Variable / Field Name":             score_var,
+    "Form Name":                         score_form,
+    "Field Type":                        score_type,
+    "Field Label":                       score_label,
+    # now all optionals too
+    "Section Header":                    score_section_header,
+    "Choices, Calculations, OR Slider Labels": score_choices,
+    "Field Note":                        score_field_note,
+    "Text Validation Type OR Show Slider Number": score_text_validation_type,
+    "Text Validation Min":               score_text_validation_min,
+    "Text Validation Max":               score_text_validation_max,
+    "Identifier?":                       score_identifier,
+    "Branching Logic":                   score_branching_logic,
+    "Required Field?":                   score_required_field,
+    "Custom Alignment":                  score_custom_alignment,
+    "Question Number (surveys only)":    score_question_number,
+    "Field Annotation":                  score_field_annotation,
 }
 
 def resolve_headers(df: pd.DataFrame, user_map: Dict[str, str]) -> tuple[pd.DataFrame, List[str], Dict[str, str]]:
@@ -119,12 +206,13 @@ def resolve_headers(df: pd.DataFrame, user_map: Dict[str, str]) -> tuple[pd.Data
     col2canon: Dict[str, str] = {}
     canon_norm = {normalise(c): c for c in ALL}
 
-    # exact matches
+    # 1) exact matches
     for col in raw_cols:
         n = normalise(col)
         if n in canon_norm and canon_norm[n] not in col2canon.values():
             col2canon[col] = canon_norm[n]
-    # synonyms
+
+    # 2) synonyms
     for col in raw_cols:
         if col in col2canon:
             continue
@@ -133,32 +221,48 @@ def resolve_headers(df: pd.DataFrame, user_map: Dict[str, str]) -> tuple[pd.Data
             if syn in n and canon not in col2canon.values():
                 col2canon[col] = canon
                 break
-    # user overrides (raw->canon)
+
+    # 3) user overrides
     for raw, canon in user_map.items():
         col2canon[raw] = canon
 
+    # apply what we know so far
     df = df.rename(columns=col2canon)
 
-    # heuristics
+    # 4) heuristics: try to fill in any remaining headers in ALL
     still_need = [c for c in ALL if c not in df.columns]
-    unmapped = [c for c in df.columns if c not in ALL]
+    unmapped   = [c for c in df.columns if c not in ALL]
     mapping: Dict[str, str] = {}
-    if still_need:
-        for canon in still_need:
-            best, best_score = None, 0.0
-            for col in unmapped:
-                score = DETECT[canon](df[col]) if canon != "Field Label" else score_label(col, df[col])
-                if score > best_score:
-                    best, best_score = col, score
-            if best_score >= 0.8:
-                mapping[best] = canon
-                unmapped.remove(best)
-        if mapping:
-            df = df.rename(columns=mapping)
-            col2canon |= mapping
 
+    for canon in still_need:
+        # only run a heuristic if we actually have a scorer for it
+        if canon not in DETECT and canon != "Field Label":
+            continue
+
+        best, best_score = None, 0.0
+        for col in unmapped:
+            # Field Label uses its special wrapper, everything else uses DETECT
+            if canon == "Field Label":
+                score = score_label(col, df[col])
+            else:
+                score = DETECT[canon](df[col])
+
+            if score > best_score:
+                best, best_score = col, score
+
+        # only accept if confident
+        if best_score >= 0.8:
+            mapping[best] = canon
+            unmapped.remove(best)
+
+    if mapping:
+        df = df.rename(columns=mapping)
+        col2canon |= mapping
+
+    # anything still un-mapped is “unknown”
     unknown = [c for c in raw_cols if c not in col2canon]
     return df, unknown, col2canon
+
 
 def classify_row(row: pd.Series, seen: set[str]) -> tuple[str, List[str]]:
     if (row == "").all():
