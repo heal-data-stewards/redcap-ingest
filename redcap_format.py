@@ -358,61 +358,75 @@ def generate_map( path: Path, out: Path, user_map: Dict[str, str], default_immed
     out.write_text(json.dumps(mapping_out, indent=2))
     print(f"Generated map for {len(mapping_out)} sheets → {out}")
 
+def apply_map(
+    source_excel: Path,
+    map_json: Path,
+    output_excel: Path,
+    elide_unlabeled: bool = False,
+):
+    """
+    Applies the JSON map to source_excel, concatenates all sheets,
+    skips blank Variable rows, and if elide_unlabeled is True, also
+    skips rows where Field Label is blank.
+    """
+    mapping_cfg = json.loads(map_json.read_text())
+    xls = pd.ExcelFile(source_excel)
+    result_sheets = []
 
-
-
-def apply_map( path: Path, mapping_file: Path, out: Path, default_immediate: Dict[str,str]):
-    all_sheets = load_all_sheets(path, user_map)
-    mapping_json = json.loads(mapping_file.read_text())
-    combined: List[pd.DataFrame] = []
-
-    for name, df in all_sheets.items():
-        sheet_cfg = mapping_json.get(name, {})
-        if sheet_cfg.get("ignore", False):
-            print(f"⏭️ Skipping sheet '{name}' per mapping")
+    for sheet_name in xls.sheet_names:
+        cfg = mapping_cfg.get(sheet_name, {})
+        if not cfg or cfg.get("ignore", False):
+            print(f"⏭️  Skipping sheet '{sheet_name}'")
             continue
 
-        canon2raw = sheet_cfg.get("mapping", {})
-        missing_req = sheet_cfg.get(
-            "missing_required",
-            [c for c in REQ if c not in canon2raw],
-        )
-        if missing_req:
-            print(f"⚠️ Sheet '{name}' missing required cols: {', '.join(missing_req)}")
+        start_row  = cfg.get("start_row", 1)
+        raw_map    = cfg.get("mapping", {})
+        immediate  = cfg.get("immediate", {})
 
-        # 1) rename raw→canon
-        df2 = df.rename(columns={v: k for k, v in canon2raw.items()})
+        # 1) Read with no header
+        df0 = pd.read_excel(source_excel, sheet_name=sheet_name, header=None, dtype=str)
 
-        # 2) collect immediates: sheet-level first…
-        immed: Dict[str,str] = dict(sheet_cfg.get("immediate", {}))
-        # …then fill in any missing with your global defaults
-        for canon, val in default_immediate.items():
-            if canon not in df2.columns or df2[canon].eq("").all():
-                immed.setdefault(canon, val)
+        # 2) Extract header & data
+        hdr  = df0.iloc[start_row-1].fillna("").astype(str).tolist()
+        data = df0.iloc[start_row:].copy()
+        data.columns = hdr
+        df2 = data.fillna("")
 
-        # 3) apply all immediates
-        for canon, val in immed.items():
+        # 3) Rename raw→canonical
+        rename_map = { raw: canon for canon, raw in raw_map.items() }
+        df2 = df2.rename(columns=rename_map)
+
+        # 4) Inject immediates
+        for canon, val in immediate.items():
             df2[canon] = val
 
-        # 4) ensure Form Name no longer blank
-        if "Form Name" not in df2.columns or df2["Form Name"].eq("").all():
-            df2["Form Name"] = name
-
-        # 5) fill any remaining 16 columns with blanks
+        # 5) Ensure all 16 REDCap columns exist
         for col in ALL:
             if col not in df2.columns:
                 df2[col] = ""
 
-        combined.append(df2[ALL])
+        # 6) Drop rows where Variable is blank
+        mask = df2["Variable / Field Name"].astype(str).str.strip().ne("")
+        #    and, if requested, drop rows where Field Label is blank
+        if elide_unlabeled:
+            mask &= df2["Field Label"].astype(str).str.strip().ne("")
 
-    if not combined:
-        sys.exit("No sheets to write (all were ignored or empty).")
+        df2 = df2.loc[mask]
 
-    result = pd.concat(combined, ignore_index=True)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        result.to_excel(writer, index=False, sheet_name="REDCap")
-    print(f"Wrote normalized REDCap file with {len(combined)} sheets → {out}")
+        # 7) Reorder to standard layout
+        df2 = df2[ALL]
+
+        result_sheets.append(df2)
+
+    if not result_sheets:
+        sys.exit("ERROR: No sheets to write (all were ignored or empty).")
+
+    # 8) Concatenate and write
+    final_df = pd.concat(result_sheets, ignore_index=True)
+    output_excel.parent.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
+        final_df.to_excel(writer, index=False, sheet_name="REDCap")
+    print(f"Wrote normalized REDCap file with {len(result_sheets)} sheets → {output_excel}")
 
 # ─────────────────────────────── main ────────────────────────────────
 def main():
@@ -426,7 +440,9 @@ def main():
     p.add_argument("--output",
                    help="Path for generated Excel when using --map")
     p.add_argument( "--default-immediate", action="append", metavar="CANON=VALUE",
-        help="Default immediate value for a canonical column if not detected; repeatable")
+                   help="Default immediate value for a canonical column if not detected; repeatable")
+    p.add_argument("--elide-unlabeled", action="store_true",
+                   help="When mapping, also skip rows with a blank Field Label",)
     args = p.parse_args()
 
     # build the default-immediate dictionary
@@ -453,10 +469,10 @@ def main():
         if not args.output:
             sys.exit("ERROR: --output is required when using --map")
         apply_map(
-            Path(args.dict_file),
-            Path(args.map_file),
-            Path(args.output),
-            default_immediate=default_immediate
+            source_excel=Path(args.dict_file),
+            map_json=Path(args.map_file),
+            output_excel=Path(args.output),
+            elide_unlabeled=args.elide_unlabeled,
         )
         sys.exit(0)
 
