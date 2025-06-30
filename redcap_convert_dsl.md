@@ -1,4 +1,3 @@
-# REDCap DSL Reference
 
 This document describes the primitive DSL commands that can be used to
 transform a REDCap‐style data dictionary into a fully compliant REDCap
@@ -76,11 +75,39 @@ on a specific row or column.
     - “Text Validation Max” ← `maxValue`
     If any of these columns does not exist, it is first created.
 
+12. **CreateOutputSheet(sheetName)**
+    Initialize or clear the single destination sheet (`sheetName`) that
+    will collect all processed rows. *Called exactly once* at script start.
+    Name must be a valid sheet name
+
+13. **ProcessSheet(sheetName, startRow)**
+    Switch context to the source sheet `sheetName` and begin processing
+    at the specified 1‑based header row (`startRow`). All subsequent
+    commands apply to each data row and append directly to the output sheet.
+
+14. **MapColumn(fromName, toName)**
+    Record a mapping from a raw header `fromName` to a canonical header
+    `toName`. This replaces the old `RenameColumn` to emphasize that
+    mappings are not in‑place renames but logical associations used during
+    processing.
+
+15. **DeleteRowsIfEmpty([columnName1, columnName2, …])**
+    Delete any row where *any* of the listed canonical columns is blank
+    or consists only of whitespace. Use this to remove rows lacking a
+    variable name and/or a field label.
+
+16. **SetCell(row, columnName, value)**
+    A catch‑all primitive for writing a constant `value` into the cell
+    at 1‑based `row` and `columnName`. Creates the column if needed.
+
 ---
 
 ## Examples
 
 ```text
+# Setting the output sheet name
+CreateOutputSheet("REDCap")
+
 # Ensure all required columns exist
 EnsureColumn("Variable / Field Name")
 EnsureColumn("Form Name")
@@ -93,6 +120,14 @@ EnsureColumn("Text Validation Max")
 
 # Rename a raw header
 RenameColumn("VarNameRaw", "Variable / Field Name")
+
+# Map a column during output generation
+ProcessSheet("Demographics", 3)
+DeleteRowsIfEmpty(["Variable / Field Name", "Field Label"])
+MapColumn("VarRaw", "Variable / Field Name")
+EnsureColumn("Field Type")
+SetFormName(ROW, "demographics")
+SetCell(ROW, "Field Type", "unknown")
 
 # Set a custom form name on every row
 SetFormName(2, "baseline_survey")
