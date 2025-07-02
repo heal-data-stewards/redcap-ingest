@@ -126,8 +126,6 @@ ProcessSheet("Demographics", 3)
 DeleteRowsIfEmpty(["Variable / Field Name", "Field Label"])
 MapColumn("VarRaw", "Variable / Field Name")
 EnsureColumn("Field Type")
-SetFormName(ROW, "demographics")
-SetCell(ROW, "Field Type", "unknown")
 
 # Set a custom form name on every row
 SetFormName(2, "baseline_survey")
