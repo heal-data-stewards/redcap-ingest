@@ -1,109 +1,103 @@
-# REDCap Ingest & Transformation
+# REDCap‑Ingest
 
-This repository provides tools to lint, infer, compile fixes, and apply
-transformations to a REDCap data dictionary, ensuring it conforms to REDCap's
-specifications.
+End‑to‑end utilities for upgrading a **quasi‑REDCap** data dictionary to a dictionary that REDCap will import without warnings.
 
-## Overview
+---
 
-Many organizations maintain data dictionaries that are almost, but not
-entirely, compliant with REDCap requirements. This project automates the
-process of identifying issues, inferring corrections, and applying fixes to
-produce a fully compliant REDCap dictionary.
+## 1&nbsp;Prerequisites
 
-## Components
+* **Python ≥ 3.8**  
+  Install dependencies once:
 
-1. **redcap_lint.py**
-   - Lints a REDCap data dictionary (CSV or XLSX).
-   - Maps arbitrary column headers to canonical REDCap headers via synonyms,
-     heuristics, and an optional `--map` file.
-   - Produces `report.json`, detailing each row's classification (valid or
-     violation) and raw values; and `map.json`, documenting header mappings
-     and overrides.
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt         # pandas, openpyxl, httpx, openai, …
+  ```
 
-2. **infer_submit.py**
-   - Packages `report.json`, `map.json`, a prompt (`infer_prompt.md`), and a
-     REDCap reference (`redcap_reference.md`).
-   - Submits to the OpenAI API to infer the correct `Field Type` and generate
-     a structured `configuration` for each row.
-   - Handles chunking for large reports, token budgeting, and concatenates
-     multiple responses into a single JSON array.
-   - Outputs `augmented_report.json` with `inferred_field_type` and
-     `configuration` fields added to each entry.
+* **OpenAI API key**  
+  Needed for the inference step ( `infer_submit.py` ):
 
-3. **compile_fixes.py**
-   - Reads the original dictionary, `map.json`, and `augmented_report.json`.
-   - Emits a DSL script (`fixes.rop`) consisting of primitive commands (e.g.,
-     `SetFieldType`, `SetChoices`, `ClearCell`) needed to correct each row.
-   - Ensures all required headers exist, applies header renames, and adds
-     default yes/no choices or clears invalid cells when appropriate.
+  ```bash
+  export OPENAI_API_KEY="sk‑yourkey"
+  ```
 
-4. **apply_dsl.py**
-   - Reads the original dictionary, `map.json`, and the DSL script
-     (`fixes.rop`).
-   - Executes each DSL primitive in order, transforming the DataFrame in
-     memory.
-   - Writes out the final, fully compliant REDCap dictionary (`NewDict.xlsx`)
-     or CSV.
+---
 
-5. **redcap_convert_dsl.md**
-   - Reference document listing all available DSL primitives and examples of
-     their usage. Includes `ClearCell`, `SetChoices`, `SetValidation`, etc.
+## 2&nbsp;Quick‑start (copy & paste)
 
-## Workflow
+The snippet below runs the *entire* pipeline on `./OriginalDict.xlsx` and leaves you with `./FinalDict.xlsx`.
 
-1. **Lint the dictionary**
-   ```sh
-   python redcap_lint.py DataDictionary.xlsx --report report.json
-   ```
-   - Produces `report.json` and `map.json`.
+```bash
+### 0  Prep ‑‑ create a throw‑away workspace
+mkdir -p work && cd work
+cp ../OriginalDict.xlsx .
 
-2. **Infer field types & configurations**
-   ```sh
-   python infer_submit.py --prompt infer_prompt.md \
-       --reference redcap_reference.md --map map.json --report report.json \
-       --output augmented_report.json
-   ```
-   - Generates `augmented_report.json`.
+### 1  Detect column → header mapping
+python ../redcap_format.py OriginalDict.xlsx       --generate-map map.json
 
-3. **Compile DSL commands**
-   ```sh
-   python compile_fixes.py --dict DataDictionary.xlsx \
-       --map map.json --report augmented_report.json --output fixes.rop
-   ```
-   - Creates `fixes.rop` with primitive operations to correct the dictionary.
+# 👉 Open map.json in an editor; fix any mismatches, then continue.
 
-4. **Apply DSL script**
-   ```sh
-   python apply_dsl.py --dict DataDictionary.xlsx \
-       --map map.json --ops fixes.rop --output NewDict.xlsx
-   ```
-   - Produces `NewDict.xlsx`, a fully REDCap-compliant dictionary.
+### 2  Draft structural fixes (rename columns, drop blank rows, …)
+python ../reformat.py OriginalDict.xlsx       --map map.json       --dsl-out stage1.ops
 
-## Requirements
+### 3  Apply those fixes
+python ../rcmod.py       --in OriginalDict.xlsx       --out Stage1Dict.xlsx       stage1.ops
 
-- Python 3.8+
-- pandas
-- openpyxl
-- tiktoken (for token counting)
-- openai
-- httpx
+### 4  Lint the result
+python ../redcap_lint.py Stage1Dict.xlsx       --report lint.json
 
-## Files
+### 5  Ask GPT to complete missing info (Field Type, Choices, Validation)
+python ../infer_submit.py       --report lint.json       --output augmented.json
 
-- `redcap_lint.py`
-- `infer_submit.py`
-- `compile_fixes.py`
-- `apply_dsl.py` (alternate name: `fix.py`)
-- `infer_prompt.md`
-- `redcap_reference.md`
-- `redcap_convert_dsl.md`
+### 6  Compile content‑level fixes
+python ../fix.py       --dict Stage1Dict.xlsx       --report augmented.json       --output stage2.ops
 
-## Notes
+### 7  Apply content fixes → 🎉 Final dictionary
+python ../rcmod.py       --in Stage1Dict.xlsx       --out FinalDict.xlsx       stage2.ops
+```
 
-- All JSON outputs (`report.json`, `augmented_report.json`, `map.json`) are
-  pretty-printed for auditability.
-- The DSL script (`fixes.rop`) is line-oriented; each line is a single
-  primitive call.
-- Operators should review `fixes.rop` before applying, to confirm that each
-  primitive aligns with audit requirements.
+*Result:* `FinalDict.xlsx` should import into REDCap with zero warnings.
+
+---
+
+## 3&nbsp;Workflow in one glance
+
+| # | Goal | Key script | Core output |
+|---|------|------------|-------------|
+| 1 | Detect column mapping | **redcap_format.py** | `map.json` |
+| 2 | Draft structural DSL | **reformat.py** | `stage1.ops` |
+| 3 | Apply structural fixes | **rcmod.py** | `Stage1Dict.xlsx` |
+| 4 | Lint | **redcap_lint.py** | `lint.json` |
+| 5 | Enrich lint via GPT | **infer_submit.py** | `augmented.json` |
+| 6 | Compile content DSL | **fix.py** | `stage2.ops` |
+| 7 | Apply content fixes | **rcmod.py** | `FinalDict.xlsx` |
+
+Each `.ops` file is plain text—review or hand‑edit anytime.
+
+---
+
+## 4&nbsp;Scripts & what they do
+
+| Script | What it does |
+|--------|--------------|
+| `redcap_format.py` | Scans a quasi‑REDCap dictionary, guesses which raw column belongs to each canonical REDCap header, and writes **`map.json`**. |
+| `reformat.py` | Reads `map.json` and emits **DSL** commands to restructure columns / rows. |
+| `rcmod.py` | Generic interpreter for the RCM DSL (`*.ops`). |
+| `redcap_lint.py` | Validates a dictionary against REDCap rules; writes a per‑row JSON report. |
+| `infer_submit.py` | Sends the lint report to GPT‑4o (or other OpenAI model) for auto‑completion of field metadata. |
+| `fix.py` | Converts the augmented report into a second DSL script that fixes content errors (choices, validation, etc.). |
+
+---
+
+## 5&nbsp;Troubleshooting
+
+* **Columns mapped wrong?**  Edit `map.json`, then restart from *Step 2*.  
+* **LLM step too large?**  `infer_submit.py --chunks 4` splits the report into four smaller requests.  
+* **Still failing linter?**  Open `lint.json`—look for `"error": "…"`. Fix manually or patch `stage2.ops`.
+
+---
+
+## 6&nbsp;License
+
+MIT
