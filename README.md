@@ -6,7 +6,7 @@ End‑to‑end utilities for upgrading a **quasi‑REDCap** data dictionary to a
 
 ## 1&nbsp;Prerequisites
 
-* **Python ≥ 3.8**  
+* **Python ≥ 3.11**  
   Install dependencies once:
 
   ```bash
