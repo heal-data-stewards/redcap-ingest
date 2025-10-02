@@ -1,103 +1,292 @@
-# REDCap‑Ingest
+# REDCap-Ingest
 
-End‑to‑end utilities for upgrading a **quasi‑REDCap** data dictionary to a dictionary that REDCap will import without warnings.
+Utilities for converting a quasi-REDCap data dictionary into a workbook
+that REDCap will import without warnings, including automated column
+normalisation, linting, LLM-assisted metadata inference, and DSL-based
+replay of fixes.
 
----
-
-## 1&nbsp;Prerequisites
-
-* **Python ≥ 3.11**  
-  Install dependencies once:
-
+## Quick Start
+- **Dev Container:** Open in VS Code and choose *Reopen in Container* to
+  get Python 3.11 with requirements preinstalled.
+- **Local Python:** Use Python 3.11+, then install dependencies once:
   ```bash
   python -m venv .venv
   source .venv/bin/activate
-  pip install -r requirements.txt         # pandas, openpyxl, httpx, openai, …
+  pip install -r requirements.txt
   ```
-
-* **OpenAI API key**  
-  Needed for the inference step ( `infer_submit.py` ):
-
+- **Minimal pipeline (run inside a scratch dir):**
   ```bash
-  export OPENAI_API_KEY="sk‑yourkey"
+  mkdir -p work && cd work
+  cp ../OriginalDict.xlsx .
+  python ../redcap_format.py OriginalDict.xlsx --generate-map map.json
+  # inspect map.json, add immediates, set ignore flags, then continue
+  python ../reformat.py OriginalDict.xlsx --map map.json --out stage1.ops
+  python ../rcmod.py --in OriginalDict.xlsx --out Stage1Dict.xlsx stage1.ops
+  python ../redcap_lint.py Stage1Dict.xlsx --report lint.json || true
+  python ../llm_submit.py --config ../job_infer.json \
+    --source lint.json --io-dir . --key-file ~/.config/openai.key
+  python ../fix.py --dict Stage1Dict.xlsx --report lint+.json \
+    --output stage2.ops
+  python ../rcmod.py --in Stage1Dict.xlsx \
+    --out FinalDict.xlsx stage2.ops
   ```
 
----
+## Pipeline Overview
+1. `redcap_format.py --generate-map`
+   - **Input:** raw XLS/XLSX (multi-sheet allowed)
+   - **Output:** `map.json` detailing sheet mappings, required field gaps,
+     and optional constants (`immediate`).
+2. `reformat.py --map ... --out ...`
+   - **Input:** original dictionary + curated `map.json`
+   - **Output:** `stage1.ops` DSL script that reproduces the mapping.
+3. `rcmod.py --in ... stage1.ops`
+   - **Input:** original dictionary + DSL
+   - **Output:** single-sheet `Stage1Dict.xlsx` with canonical columns.
+4. `redcap_lint.py --report lint.json`
+   - **Input:** `Stage1Dict.xlsx`
+   - **Output:** structured lint findings (`lint.json`) and exit code 2 on
+     violations.
+5. `llm_submit.py --config job_infer.json`
+   - **Input:** `lint.json` (source payload) plus prompt/reference files
+     listed in `job_infer.json`
+   - **Output:** augmented lint (`lint+.json`) containing inferred field
+     types and configurations.
+6. `fix.py --dict Stage1Dict.xlsx --report lint+.json`
+   - **Input:** stage-one dictionary + augmented lint
+   - **Output:** `stage2.ops` DSL with content-level fixes.
+7. `rcmod.py --in Stage1Dict.xlsx stage2.ops`
+   - **Input:** stage-one dictionary + content DSL
+   - **Output:** `FinalDict.xlsx` ready for import.
+8. Optional: `llm_submit.py --config job_summary.json --source stage2.ops`
+   to generate a Markdown change summary for authors and ingest staff.
 
-## 2&nbsp;Quick‑start (copy & paste)
-
-The snippet below runs the *entire* pipeline on `./OriginalDict.xlsx` and leaves you with `./FinalDict.xlsx`.
-
+**End-to-end example:**
 ```bash
-### 0  Prep ‑‑ create a throw‑away workspace
-mkdir -p work && cd work
-cp ../OriginalDict.xlsx .
-
-### 1  Detect column → header mapping
-python ../redcap_format.py OriginalDict.xlsx       --generate-map map.json
-
-# 👉 Open map.json in an editor; fix any mismatches, then continue.
-
-### 2  Draft structural fixes (rename columns, drop blank rows, …)
-python ../reformat.py OriginalDict.xlsx       --map map.json       --dsl-out stage1.ops
-
-### 3  Apply those fixes
-python ../rcmod.py       --in OriginalDict.xlsx       --out Stage1Dict.xlsx       stage1.ops
-
-### 4  Lint the result
-python ../redcap_lint.py Stage1Dict.xlsx       --report lint.json
-
-### 5  Ask GPT to complete missing info (Field Type, Choices, Validation)
-python ../infer_submit.py       --report lint.json       --output augmented.json
-
-### 6  Compile content‑level fixes
-python ../fix.py       --dict Stage1Dict.xlsx       --report augmented.json       --output stage2.ops
-
-### 7  Apply content fixes → 🎉 Final dictionary
-python ../rcmod.py       --in Stage1Dict.xlsx       --out FinalDict.xlsx       stage2.ops
+python redcap_format.py Raw.xlsx --generate-map tmp/map.json
+python reformat.py Raw.xlsx --map tmp/map.json --out tmp/structure.ops
+python rcmod.py --in Raw.xlsx --out tmp/Stage1.xlsx tmp/structure.ops
+python redcap_lint.py tmp/Stage1.xlsx --report tmp/lint.json || true
+python llm_submit.py --config job_infer.json --source tmp/lint.json \
+  --io-dir tmp --key-env OPENAI_API_KEY
+python fix.py --dict tmp/Stage1.xlsx --report tmp/lint+.json \
+  --output tmp/content.ops
+python rcmod.py --in tmp/Stage1.xlsx \
+  --out Final.xlsx tmp/content.ops
 ```
 
-*Result:* `FinalDict.xlsx` should import into REDCap with zero warnings.
+## Script Reference
+### redcap_format.py
+Maps raw headers to canonical REDCap columns and writes `map.json` or a
+normalised workbook.
 
----
+```text
+usage: redcap_format.py [-h] [--generate-map GENERATE_MAP] [--map MAP_FILE]
+                        [--output OUTPUT] [--default-immediate CANON=VALUE]
+                        [--elide-unlabeled]
+                        dict_file
 
-## 3&nbsp;Workflow in one glance
+positional arguments:
+  dict_file             Excel/CSV to scan or normalize
 
-| # | Goal | Key script | Core output |
-|---|------|------------|-------------|
-| 1 | Detect column mapping | **redcap_format.py** | `map.json` |
-| 2 | Draft structural DSL | **reformat.py** | `stage1.ops` |
-| 3 | Apply structural fixes | **rcmod.py** | `Stage1Dict.xlsx` |
-| 4 | Lint | **redcap_lint.py** | `lint.json` |
-| 5 | Enrich lint via GPT | **infer_submit.py** | `augmented.json` |
-| 6 | Compile content DSL | **fix.py** | `stage2.ops` |
-| 7 | Apply content fixes | **rcmod.py** | `FinalDict.xlsx` |
+options:
+  -h, --help            show this help message and exit
+  --generate-map GENERATE_MAP
+                        Path to write JSON map of raw→canon per sheet
+  --map MAP_FILE        Path to JSON map (from --generate-map) to apply
+  --output OUTPUT       Path for generated Excel when using --map
+  --default-immediate CANON=VALUE
+                        Default immediate value for a canonical column if not
+                        detected; repeatable
+  --elide-unlabeled     When mapping, also skip rows with a blank Field Label
+```
 
-Each `.ops` file is plain text—review or hand‑edit anytime.
+Typical usage:
+```
+python redcap_format.py Raw.xlsx --generate-map tmp/map.json
+python redcap_format.py Raw.xlsx --map tmp/map.json --output tmp/Stage0.xlsx
+```
 
----
+### reformat.py
+Builds a deterministic DSL (`*.ops`) equivalent to applying a `map.json`.
 
-## 4&nbsp;Scripts & what they do
+```text
+usage: reformat.py [-h] [--map MAP_FILE] [--out OUT_FILE] [--elide-unlabeled]
+                   dict_file
 
-| Script | What it does |
-|--------|--------------|
-| `redcap_format.py` | Scans a quasi‑REDCap dictionary, guesses which raw column belongs to each canonical REDCap header, and writes **`map.json`**. |
-| `reformat.py` | Reads `map.json` and emits **DSL** commands to restructure columns / rows. |
-| `rcmod.py` | Generic interpreter for the RCM DSL (`*.ops`). |
-| `redcap_lint.py` | Validates a dictionary against REDCap rules; writes a per‑row JSON report. |
-| `infer_submit.py` | Sends the lint report to GPT‑4o (or other OpenAI model) for auto‑completion of field metadata. |
-| `fix.py` | Converts the augmented report into a second DSL script that fixes content errors (choices, validation, etc.). |
+positional arguments:
+  dict_file          Original Excel/CSV dictionary
 
----
+options:
+  -h, --help         show this help message and exit
+  --map MAP_FILE     map.json produced by --generate-map (defaults to
+                     <DICT>-map.json)
+  --out OUT_FILE     Path to write the generated DSL (defaults to
+                     <DICT>-reformat.rcm)
+  --elide-unlabeled  Also delete rows with blank Field Label
+```
 
-## 5&nbsp;Troubleshooting
+Example:
+```
+python reformat.py Raw.xlsx --map tmp/map.json --out tmp/structure.ops
+```
 
-* **Columns mapped wrong?**  Edit `map.json`, then restart from *Step 2*.  
-* **LLM step too large?**  `infer_submit.py --chunks 4` splits the report into four smaller requests.  
-* **Still failing linter?**  Open `lint.json`—look for `"error": "…"`. Fix manually or patch `stage2.ops`.
+### rcmod.py
+Executes DSL primitives over one or more sheets and writes the combined
+output workbook.
 
----
+```text
+usage: rcmod.py [-h] --in INPUT_DICT --out OUTPUT_DICT ops_file
 
-## 6&nbsp;License
+Apply DSL operations to REDCap dictionary
 
-MIT
+positional arguments:
+  ops_file           DSL operations file
+
+options:
+  -h, --help         show this help message and exit
+  --in INPUT_DICT    Original REDCap dictionary file (XLS/XLSX or CSV)
+  --out OUTPUT_DICT  Output corrected dictionary file
+```
+
+Example:
+```
+python rcmod.py --in Raw.xlsx --out Stage1.xlsx structure.ops
+```
+
+### redcap_lint.py
+Validates canonical dictionaries, emitting a JSON lint report and non-zero
+exit codes when violations occur.
+
+```text
+usage: redcap_lint.py [-h] [--report REPORT_FILE] [--form-name FORM_NAME]
+                      dict_file
+
+Lint a REDCap data dictionary.
+
+positional arguments:
+  dict_file             Path to REDCap data dictionary (CSV/XLS/XLSX)
+
+options:
+  -h, --help            show this help message and exit
+  --report REPORT_FILE  Write detailed JSON lint report to this path
+  --form-name FORM_NAME
+                        Override every value in the 'Form Name' column
+```
+
+Example:
+```
+python redcap_lint.py Stage1.xlsx --report lint.json || true
+```
+
+### fix.py
+Converts augmented lint output into DSL fixes for content (types, choices,
+validations).
+
+```text
+usage: fix.py [-h] --dict DICT_FILE --report REPORT_FILE [-o OUT_FILE]
+
+Compile DSL primitives from augmented report.json
+
+options:
+  -h, --help            show this help message and exit
+  --dict DICT_FILE      Original REDCap dictionary (.csv or .xlsx)
+  --report REPORT_FILE  Augmented report.json with inferred_field_type &
+                        configuration
+  -o OUT_FILE, --output OUT_FILE
+                        Path to write DSL commands (defaults to stdout)
+```
+
+Example:
+```
+python fix.py --dict Stage1.xlsx --report lint+.json --output content.ops
+```
+
+### infer_submit.py
+Legacy direct OpenAI submission helper that reads prompt/reference files
+and a JSON lint report, then concatenates chunked completions.
+
+```text
+usage: infer_submit.py [-h] [--model MODEL] [--max-tokens MAX_TOKENS]
+                       [--chunks CHUNKS] [--dry-run]
+                       [--log-level {debug,info,warning,error,critical}]
+                       [--prompt PROMPT] [--reference REFERENCE]
+                       [--report REPORT] [--config CONFIG] [--output OUTPUT]
+
+Submit REDCap inference prompt to the OpenAI API
+```
+
+Example (requires `infer_config.json` with an `api_key` field):
+```
+python infer_submit.py --report lint.json --output lint+.json
+```
+
+### llm_submit.py
+Current, configurable OpenAI job runner with auto-chunking, templated
+outputs, and support for JSON or text sources.
+
+```text
+usage: llm_submit.py [-h] --config CONFIG [--source SOURCE] [--model MODEL]
+                     [--max-tokens MAX_TOKENS] [--temperature TEMPERATURE]
+                     [--job-name JOB_NAME] [--io-dir IO_DIR] [--dry-run]
+                     [--key-file KEY_FILE] [--key-env KEY_ENV]
+                     [--log-level {debug,info,warning,error,critical}]
+                     [--output OUTPUT] [--raw]
+
+General OpenAI submission helper (auto-chunking, io-dir)
+```
+
+Examples:
+```
+python llm_submit.py --config job_infer.json --source lint.json --io-dir tmp
+python llm_submit.py --config job_summary.json --source stage2.ops --io-dir tmp
+```
+
+## Configuration
+- `map.json`: produced by `redcap_format.py`; see `map_file_format.md` for
+  schema details.
+- `job_infer.json` and `job_summary.json`: presets for `llm_submit.py`
+  describing prompts, models, chunking headers, and output templates.
+- `infer_prompt.md`, `summary.md`, `system_invariants_*.md`, and
+  `redcap_reference.md`: prompt assets loaded by the job configs.
+- `infer_submit.py` reads API keys from `--config` JSON (`{"api_key":
+  "..."}`).
+- `llm_submit.py` resolves API keys via `--key-file`, `--key-env`, or
+  `OPENAI_API_KEY`.
+- Devcontainer propagates `OPENAI_API_KEY` and optional `OPENAI_BASE_URL`
+  from the host; replicate this locally as needed.
+
+## File / Repo Layout
+- `redcap_format.py`, `reformat.py`, `rcmod.py`: structural mapping tools.
+- `redcap_lint.py`, `fix.py`: linting and DSL generation for content fixes.
+- `llm_submit.py`, `infer_submit.py`: LLM submission tooling.
+- `job_*.json`, `infer_prompt.md`, `summary.md`, `system_invariants_*.md`:
+  prompt definitions and job presets.
+- `redcap_reference.md`, `map_file_format.md`, `redcap_convert_dsl.md`:
+  reference documentation for REDCap columns and DSL primitives.
+- `.devcontainer/`: Python 3.11 container definition (Debian Bookworm).
+- `requirements.txt`: pandas, openpyxl, openai, tiktoken runtime deps.
+- `save/`: archival copies of earlier scripts (for comparison only).
+
+## Changes Since Previous Version
+- `apply_dsl.py` (see `save/rfi.py`) has been superseded by `rcmod.py`,
+  which no longer requires `--map` at runtime.
+- `compile_fixes.py` was renamed to `fix.py` and now always ensures
+  `Section Header` exists before applying row fixes.
+- `infer_submit.py` dropped `map.json` support; the modern replacement is
+  `llm_submit.py` plus `job_infer.json`.
+- New job workflow: `llm_submit.py` + `job_summary.json` produces an
+  author-facing report from the generated DSL.
+
+## Troubleshooting / Common Errors
+- `redcap_format.py --map` exits if `--output` is omitted; pass an explicit
+  path when normalising.
+- `rcmod.py` only accepts XLS/XLSX inputs for multi-sheet processing; CSV
+  sources must be converted first.
+- `llm_submit.py` aborts if the config embeds `api_key`, `chunks`, or
+  `source`; provide those at runtime instead.
+- OpenAI quota errors show a usage summary via `quota_utils.summarize_usage`
+  when available; check billing limits before retrying.
+
+## Contributing & License
+Contributions are welcome via pull request; document any new primitives or
+job configs alongside code changes. Licensed under the MIT License.
