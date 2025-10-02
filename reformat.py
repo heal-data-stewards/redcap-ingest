@@ -3,12 +3,17 @@
 redcap_dsl_gen.py
 ─────────────────
 Generate a DSL script (in the primitives document) that performs the same
-normalisation as redcap_format.py --map … --output … .
+normalisation as redcap_format.py --map … --out … .
 
 Usage
 ─────
-  python redcap_dsl_gen.py <DICT.xlsx/CSV> --map MAP.json --dsl-out OUT.ops
+  python redcap_dsl_gen.py <DICT.xlsx/CSV> [--map MAP.json] [--out OUT.rcm]
                           [--elide-unlabeled]
+
+Defaults
+────────
+  --map  → <DICT path>/<DICT basename>-map.json
+  --out  → <DICT path>/<DICT basename>-reformat.rcm
 
 The MAP.json must be the file produced previously via --generate-map.
 """
@@ -138,18 +143,36 @@ def generate_dsl(
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("dict_file", help="Original Excel/CSV dictionary")
-    ap.add_argument("--map", required=True, dest="map_file",
-                    help="map.json produced by --generate-map")
-    ap.add_argument("--dsl-out", required=True,
-                    help="Path to write the generated DSL (.ops)")
-    ap.add_argument("--elide-unlabeled", action="store_true",
-                    help="Also delete rows with blank Field Label")
+    ap.add_argument(
+        "--map",
+        dest="map_file",
+        help="map.json produced by --generate-map (defaults to <DICT>-map.json)",
+        required=False,
+    )
+    ap.add_argument(
+        "--out",
+        dest="out_file",
+        help="Path to write the generated DSL (defaults to <DICT>-reformat.rcm)",
+        required=False,
+    )
+    ap.add_argument(
+        "--elide-unlabeled",
+        action="store_true",
+        help="Also delete rows with blank Field Label",
+    )
     args = ap.parse_args()
 
+    dict_path = Path(args.dict_file).resolve()
+    base = dict_path.stem
+
+    # Compute defaults if not provided
+    map_path = Path(args.map_file) if args.map_file else dict_path.with_name(f"{base}-map.json")
+    out_path = Path(args.out_file) if args.out_file else dict_path.with_name(f"{base}-reformat.rcm")
+
     generate_dsl(
-        dict_path=Path(args.dict_file),
-        map_json=Path(args.map_file),
-        dsl_out=Path(args.dsl_out),
+        dict_path=dict_path,
+        map_json=map_path,
+        dsl_out=out_path,
         elide_unlabeled=args.elide_unlabeled,
     )
 
