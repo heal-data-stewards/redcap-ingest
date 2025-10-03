@@ -18,7 +18,7 @@ replay of fixes.
   ```bash
   mkdir -p work && cd work
   cp ../OriginalDict.xlsx .
-  python ../redcap_format.py OriginalDict.xlsx --generate-map map.json
+  python ../map.py OriginalDict.xlsx --out map.json
   # inspect map.json, add immediates, set ignore flags, then continue
   python ../reformat.py OriginalDict.xlsx --map map.json --out stage1.ops
   python ../rcmod.py --in OriginalDict.xlsx --out Stage1Dict.xlsx stage1.ops
@@ -32,7 +32,7 @@ replay of fixes.
   ```
 
 ## Pipeline Overview
-1. `redcap_format.py --generate-map`
+1. `map.py --out ...`
    - **Input:** raw XLS/XLSX (multi-sheet allowed)
    - **Output:** `map.json` detailing sheet mappings, required field gaps,
      and optional constants (`immediate`).
@@ -62,7 +62,7 @@ replay of fixes.
 
 **End-to-end example:**
 ```bash
-python redcap_format.py Raw.xlsx --generate-map tmp/map.json
+python map.py Raw.xlsx --out tmp/map.json
 python reformat.py Raw.xlsx --map tmp/map.json --out tmp/structure.ops
 python rcmod.py --in Raw.xlsx --out tmp/Stage1.xlsx tmp/structure.ops
 python redcap_lint.py tmp/Stage1.xlsx --report tmp/lint.json || true
@@ -75,34 +75,56 @@ python rcmod.py --in tmp/Stage1.xlsx \
 ```
 
 ## Script Reference
-### redcap_format.py
-Maps raw headers to canonical REDCap columns and writes `map.json` or a
-normalised workbook.
+### map.py
+Scans a quasi-REDCap dictionary and produces the JSON map consumed by later
+steps.
 
 ```text
-usage: redcap_format.py [-h] [--generate-map GENERATE_MAP] [--map MAP_FILE]
-                        [--output OUTPUT] [--default-immediate CANON=VALUE]
-                        [--elide-unlabeled]
-                        dict_file
+usage: map.py [-h] [--out OUT_FILE] [--default-immediate CANON=VALUE]
+              dict_file
+
+Generate raw→canonical column maps
 
 positional arguments:
-  dict_file             Excel/CSV to scan or normalize
+  dict_file             Excel/CSV data dictionary to scan
 
 options:
   -h, --help            show this help message and exit
-  --generate-map GENERATE_MAP
-                        Path to write JSON map of raw→canon per sheet
-  --map MAP_FILE        Path to JSON map (from --generate-map) to apply
-  --output OUTPUT       Path for generated Excel when using --map
+  --out OUT_FILE        Destination for the generated JSON map (default:
+                        <DICT>-map.json)
   --default-immediate CANON=VALUE
-                        Default immediate value for a canonical column if not
-                        detected; repeatable
-  --elide-unlabeled     When mapping, also skip rows with a blank Field Label
+                        Inject default values for missing canonical columns;
+                        repeatable
 ```
 
-Typical usage:
+Example:
 ```
-python redcap_format.py Raw.xlsx --generate-map tmp/map.json
+python map.py Raw.xlsx --out tmp/map.json
+```
+
+### redcap_format.py
+Applies a previously generated map to rebuild the dictionary with canonical
+columns.
+
+```text
+usage: redcap_format.py [-h] --map MAP_FILE --output OUTPUT_FILE
+                        [--elide-unlabeled]
+                        dict_file
+
+Apply a REDCap mapping JSON
+
+positional arguments:
+  dict_file             Original Excel workbook
+
+options:
+  -h, --help            show this help message and exit
+  --map MAP_FILE        Path to map JSON
+  --output OUTPUT_FILE  Destination XLSX to write
+  --elide-unlabeled     Also drop rows lacking a Field Label
+```
+
+Example:
+```
 python redcap_format.py Raw.xlsx --map tmp/map.json --output tmp/Stage0.xlsx
 ```
 
@@ -118,7 +140,7 @@ positional arguments:
 
 options:
   -h, --help         show this help message and exit
-  --map MAP_FILE     map.json produced by --generate-map (defaults to
+  --map MAP_FILE     map.json produced by map.py (defaults to
                      <DICT>-map.json)
   --out OUT_FILE     Path to write the generated DSL (defaults to
                      <DICT>-reformat.rcm)
@@ -256,7 +278,7 @@ python llm_submit.py --config job_summary.json --source stage2.ops --io-dir tmp
   from the host; replicate this locally as needed.
 
 ## File / Repo Layout
-- `redcap_format.py`, `reformat.py`, `rcmod.py`: structural mapping tools.
+- `map.py`, `redcap_format.py`, `reformat.py`, `rcmod.py`: structural mapping tools.
 - `redcap_lint.py`, `fix.py`: linting and DSL generation for content fixes.
 - `llm_submit.py`, `infer_submit.py`: LLM submission tooling.
 - `job_*.json`, `infer_prompt.md`, `summary.md`, `system_invariants_*.md`:
@@ -268,6 +290,8 @@ python llm_submit.py --config job_summary.json --source stage2.ops --io-dir tmp
 - `save/`: archival copies of earlier scripts (for comparison only).
 
 ## Changes Since Previous Version
+- New `map.py` isolates JSON map generation; `redcap_format.py` now only
+  applies existing maps.
 - `apply_dsl.py` (see `save/rfi.py`) has been superseded by `rcmod.py`,
   which no longer requires `--map` at runtime.
 - `compile_fixes.py` was renamed to `fix.py` and now always ensures

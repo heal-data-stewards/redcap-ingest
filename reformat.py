@@ -146,7 +146,7 @@ def main() -> None:
     ap.add_argument(
         "--map",
         dest="map_file",
-        help="map.json produced by --generate-map (defaults to <DICT>-map.json)",
+        help="map.json produced by map.py (defaults to <DICT>-map.json)",
         required=False,
     )
     ap.add_argument(
