@@ -151,13 +151,17 @@ def split_into_chunks(seq: List[Any], n: int) -> List[List[Any]]:
     size = (len(seq) + n - 1) // n
     return [seq[i:i+size] for i in range(0, len(seq), size)]
 
-def load_from_spec(spec: Dict[str, Any]) -> str:
+def load_from_spec(cfg: Dict[str, Any], spec: Dict[str, Any]) -> str:
     tp = spec.get("type")
     header = spec.get("header", "")
     if tp == "literal":
         return f"{header}{spec.get('text','')}"
     if tp == "file":
         path = Path(spec["path"])
+        if not path.is_absolute():
+            cfg_path = cfg.get("_config_path")
+            if cfg_path:
+                path = Path(cfg_path).resolve().parent / path
         if not path.is_file():
             logging.error(f"File not found: {path}")
             sys.exit(1)
@@ -170,7 +174,7 @@ def build_messages(cfg: Dict[str, Any]) -> List[Dict[str, str]]:
     for m in cfg.get("messages", []):
         role = m.get("role")
         frm = m.get("from", {})
-        content = load_from_spec(frm)
+        content = load_from_spec(cfg, frm)
         msgs.append({"role": role, "content": content})
     return msgs
 
@@ -182,6 +186,9 @@ def load_source(cfg: Dict[str, Any]) -> Optional[List[Any]]:
     p = Path(src_path)
     if not p.is_absolute():
         p = io_dir / p
+    resolved = p.resolve()
+    cfg["_resolved_source_path"] = str(resolved)
+    p = resolved
     if not p.is_file():
         logging.error(f"source file not found: {p}")
         sys.exit(1)
@@ -270,8 +277,17 @@ def format_output_path(cfg: Dict[str, Any], derived: Dict[str, Any]) -> str:
     uid = str(uuid.uuid4())[:8]
     rel = tpl.format(job=job, model=model, srcbase=srcbase, srcstem=srcstem,
                      ts=ts, pid=pid, uuid=uid)
-    io_dir = Path(cfg.get("_io_dir") or ".")
-    return str(io_dir / rel)
+    rel_path = Path(rel)
+    if rel_path.is_absolute():
+        return str(rel_path)
+
+    src_parent = None
+    resolved_src = cfg.get("_resolved_source_path")
+    if resolved_src:
+        src_parent = Path(resolved_src).parent
+
+    base_dir = src_parent or Path(cfg.get("_io_dir") or ".")
+    return str((base_dir / rel_path).resolve())
 
 def call_openai(client: OpenAI, model: str, messages: List[Dict[str,str]],
                 temperature: float, max_tokens: int,
