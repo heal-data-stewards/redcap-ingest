@@ -67,9 +67,13 @@ def main():
         # Variable name correction
         orig_var = entry.get("Variable / Field Name", "")
         if not VAR_RE.match(orig_var):
-            newvar = entry.get("inferred_variable_name", "")
-            if newvar:
-                ops.append(f'SetVariableName({row}, "{newvar}")')
+            lowered = orig_var.lower()
+            if orig_var and lowered != orig_var and VAR_RE.match(lowered):
+                ops.append(f'LowercaseVariableName({row})')
+            else:
+                newvar = entry.get("inferred_variable_name", "")
+                if newvar:
+                    ops.append(f'SetVariableName({row}, "{newvar}")')
 
         # Field type
         if inf_type:

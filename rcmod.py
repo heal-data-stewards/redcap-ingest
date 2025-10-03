@@ -96,6 +96,13 @@ class DSLExecutor:
             raise ValueError(f"Invalid startRow value: '{startRow}'. Expected an integer.")
         self.column_mappings = {}
 
+        # Track existing variable names so later renames remain unique
+        if 'Variable / Field Name' in df.columns:
+            for name in df['Variable / Field Name'].astype(str):
+                cleaned = (name or '').strip()
+                if cleaned:
+                    self.seen_vars.add(cleaned)
+
     def MapColumn(self, fromName, toName):
         """
         Record and enact a mapping of a raw header into a canonical header
@@ -164,6 +171,36 @@ class DSLExecutor:
         if 0 <= idx < len(df):
             df.at[idx, 'Variable / Field Name'] = candidate
             self.seen_vars.add(candidate)
+
+    def LowercaseVariableName(self, row):
+        df = self._active_df()
+        try:
+            idx = int(row) - 2
+        except ValueError:
+            raise ValueError(f"Invalid row value: '{row}'. Expected an integer.")
+
+        self.EnsureColumn('Variable / Field Name')
+        if not (0 <= idx < len(df)):
+            return
+
+        current = str(df.at[idx, 'Variable / Field Name'] or '')
+        lowered = current.lower()
+        if not lowered:
+            return
+
+        if not VAR_RE.match(lowered):
+            raise ValueError(
+                f"LowercaseVariableName would still violate naming rules: '{current}'"
+            )
+
+        base, suffix = lowered, 2
+        candidate = lowered
+        while candidate in self.seen_vars:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+
+        df.at[idx, 'Variable / Field Name'] = candidate
+        self.seen_vars.add(candidate)
 
     def SetFieldType(self, row, ftype):
         self.SetCell(row, 'Field Type', ftype)
