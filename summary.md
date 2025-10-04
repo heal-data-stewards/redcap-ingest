@@ -24,6 +24,10 @@ ingest team.
 - Only report a theme (e.g., Likert standardization, calc fields) if there is
   explicit evidence in the log (SetChoices/SetSlider with 4–7 ordered
   options, SetFieldType(calc), etc.). Otherwise omit it.
+- When the log is dominated by `EnsureColumn`, `MapColumn`, `SetFormName`, or
+  `DeleteRowsIfEmpty`, treat it as a **mapping/normalisation** stage: describe
+  canon-column coverage, sheet consolidation, and row filtering instead of
+  implying content edits.
 - Never list more than 6 specific row/field references. If there are more,
   state the count and include up to 6 examples: “(e.g., rows 2, 5, 8, 14, 15, 17)”.
 
@@ -55,6 +59,8 @@ ingest team.
 ### Structural Fixes (2–6 bullets, aggregated)
 - Summarize column header/form/row cleanup.
 - Note any deletions (criteria-based) without listing rows.
+- For mapping scripts, call out which raw columns were linked to canonical
+  headers and any sheet-level form assignments or default immediates applied.
 
 ### Content Normalization (grouped by theme)
 - Field types: counts by type change (e.g., “12 → yesno”, “9 → radio”).
@@ -62,12 +68,18 @@ ingest team.
   items”; “5-point Likert unified”).
 - Validation: ranges/validators aligned; call out any missing/empty ranges
   that were cleared intentionally.
+- If the script only performs mapping operations, keep this section brief or
+  state “Not applicable (mapping-only stage)” and focus detail in Structural
+  Fixes.
 
 ### Upstream Guidance for the Author (3–7 bullets)
 - Concrete, *do-this-next-time* rules, with 1–2 crisp examples each.
 - Examples must reference specific fields (name or label) only as needed.
 - For each guidance bullet, include: (pattern → rule → 1 example).
 - Max 1 sentence of rationale per bullet.
+- Mapping stage guidance should focus on reinforcing canonical column mapping
+  (e.g., “map ‘Data Type’ → ‘Field Type’ in the source spreadsheet before the
+  pipeline runs”).
 
 ### Risks & Follow-ups (optional, ≤ 3 bullets)
 - Note any residual ambiguities that require human review.

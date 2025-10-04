@@ -1,0 +1,35 @@
+{
+  "job_name": "summary-rollup",
+  "model": "gpt-4o-mini",
+  "max_tokens": 16000,
+  "temperature": 0.25,
+  "messages": [
+    {
+      "role": "system",
+      "from": {
+        "type": "file",
+        "path": "system_invariants_rollup.md"
+      }
+    },
+    {
+      "role": "user",
+      "from": {
+        "type": "file",
+        "path": "summary_rollup.md"
+      }
+    },
+    {
+      "role": "user",
+      "from": {
+        "type": "file",
+        "path": "redcap_reference.md",
+        "header": "### REDCap Reference\n"
+      }
+    }
+  ],
+  "source_format": "text",
+  "output": {
+    "format": "text",
+    "path_template": "summary-rollup-{ts}.md"
+  }
+}

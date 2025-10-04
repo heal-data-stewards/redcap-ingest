@@ -175,6 +175,37 @@ Example:
 python rcmod.py --in Raw.xlsx --out Stage1.xlsx structure.ops
 ```
 
+### summarize_rcm.py
+Runs `llm_submit.py` for each supplied DSL (`*.rcm`) file and concatenates the
+stage summaries into a single markdown report.
+
+```text
+usage: summarize_rcm.py [-h] [--config CONFIG] [--output OUTPUT]
+                        [--io-dir IO_DIR]
+                        rcm_files [rcm_files ...]
+
+Generate an aggregated summary for multiple RCM files.
+
+positional arguments:
+  rcm_files            Paths to *.rcm files in the order they should be
+                        summarised
+
+options:
+  -h, --help           show this help message and exit
+  --config CONFIG      Path to llm_submit job config (default:
+                        job_summary.json)
+  --output OUTPUT      Path for the combined markdown summary (default:
+                        combined-summary.md)
+  --io-dir IO_DIR      Override llm_submit --io-dir (defaults to current
+                        working directory)
+```
+
+Example:
+```
+python summarize_rcm.py stage1.rcm fixes/stage2.rcm \
+  --output pipeline-summary.md
+```
+
 ### redcap_lint.py
 Validates canonical dictionaries, emitting a JSON lint report and non-zero
 exit codes when violations occur.
@@ -281,7 +312,8 @@ python llm_submit.py --config job_summary.json --source stage2.ops --io-dir tmp
 - `map.py`, `redcap_format.py`, `reformat.py`, `rcmod.py`: structural mapping tools.
 - `redcap_lint.py`, `fix.py`: linting and DSL generation for content fixes.
 - `llm_submit.py`, `infer_submit.py`: LLM submission tooling.
-- `job_*.json`, `infer_prompt.md`, `summary.md`, `system_invariants_*.md`:
+- `job_*.json`, `infer_prompt.md`, `summary.md`, `summary_rollup.md`,
+  `system_invariants_*.md`: prompt definitions and job presets.
   prompt definitions and job presets.
 - `redcap_reference.md`, `map_file_format.md`, `redcap_convert_dsl.md`:
   reference documentation for REDCap columns and DSL primitives.
