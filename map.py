@@ -65,8 +65,11 @@ SYNONYM: Dict[str, str] = {
     "variable": "Variable / Field Name",
     "var": "Variable / Field Name",
     "fieldname": "Variable / Field Name",
+    "fieldid": "Variable / Field Name",
     "label": "Field Label",
+    "fieldlabel": "Field Label",
     "description": "Field Label",
+    "fielddescription": "Field Label",
     "type": "Field Type",
     "datatype": "Field Type",
     "notes": "Field Note",
@@ -81,12 +84,13 @@ SYNONYM: Dict[str, str] = {
     "annotation": "Field Annotation",
     "choices": CHOICE_COL,
     "permissiblevalues": CHOICE_COL,
+    "validvalues": CHOICE_COL,
     "validation": "Text Validation Type OR Show Slider Number",
 }
 
 
 def normalise(name: str) -> str:
-    return re.sub(r"\W+", "", name).lower()
+    return re.sub(r"[^a-z0-9]+", "", name.lower())
 
 
 # ──────────────────────────── Scoring functions ─────────────────────────────

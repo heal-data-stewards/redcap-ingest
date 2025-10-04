@@ -88,14 +88,28 @@ class DSLExecutor:
         if self.excel is None:
             raise ValueError("No Excel workbook loaded; cannot ProcessSheet")
 
-        # Load the sheet
+        # Load the sheet; start with pandas' default header handling
         df = self.excel.parse(sheetName, dtype=str).fillna('')
 
-        self.current_sheet_df = df
         try:
-            self.current_start_row_idx = int(startRow) - 2
+            start_idx = int(startRow) if startRow is not None else 2
         except ValueError:
             raise ValueError(f"Invalid startRow value: '{startRow}'. Expected an integer.")
+
+        if 'Variable / Field Name' not in df.columns:
+            raw = self.excel.parse(sheetName, header=None, dtype=str).fillna('')
+            hdr_idx = max(start_idx - 1, 0)
+            if hdr_idx >= len(raw):
+                raise ValueError(
+                    f"startRow {start_idx} exceeds sheet length for '{sheetName}'"
+                )
+            header = raw.iloc[hdr_idx].astype(str).tolist()
+            data = raw.iloc[hdr_idx + 1 :].copy()
+            df = data.fillna('')
+            df.columns = header
+
+        self.current_sheet_df = df
+        self.current_start_row_idx = start_idx - 2
         self.column_mappings = {}
 
         # Track existing variable names so later renames remain unique

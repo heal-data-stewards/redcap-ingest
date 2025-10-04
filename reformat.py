@@ -72,8 +72,17 @@ def load_sheet(path: Path, sheet: str, start_row: int | None) -> Tuple[pd.DataFr
         raw = pd.read_csv(path, header=None, dtype=str)
     hdr_idx = (start_row-1) if start_row else find_header_row(raw)
     header = raw.iloc[hdr_idx].fillna("").astype(str).tolist()
-    data   = raw.iloc[hdr_idx+1:].fillna("")
+
+    first_data_idx = hdr_idx + 1
+    while first_data_idx < len(raw):
+        row = raw.iloc[first_data_idx]
+        if any(str(x or "").strip() for x in row):
+            break
+        first_data_idx += 1
+
+    data   = raw.iloc[first_data_idx:].fillna("")
     data.columns = header
+    data = data.reset_index(drop=True)
     return data, hdr_idx+1  # convert to 1-based as DSL expects
 
 # ――――――――――――――――――――――― DSL generation ――――――――――――――――――――――――――――
@@ -125,9 +134,8 @@ def generate_dsl(
 
         # 4) Inject immediates row-by-row
         if immed:
-            # absolute row numbers in original sheet = start_row + i
-            for i, _ in df.iterrows():
-                row_num = i + start_row + 1  # pandas index starts at 0
+            for offset, _ in enumerate(df.itertuples(index=False)):
+                row_num = start_row + offset
                 if "Form Name" in immed:
                     emit(f'SetFormName({row_num}, "{immed["Form Name"]}")', dsl)
                 for canon, val in immed.items():
