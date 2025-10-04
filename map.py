@@ -313,9 +313,11 @@ def generate_map(path: Path, out: Path, user_map: Dict[str, str], default_immedi
         hdr0 = find_header_row(raw, user_map)
         start_row = hdr0 + 1
 
-        _, _, col2canon = resolve_headers(df, user_map)
+        _, unknown_raw, col2canon = resolve_headers(df, user_map)
         canon2raw = {canon: raw for raw, canon in col2canon.items()}
-        missing_req = [c for c in REQ if c not in canon2raw]
+        initial_missing_req = [c for c in REQ if c not in canon2raw]
+        unused_canon = [c for c in ALL if c not in canon2raw]
+        missing_req = list(initial_missing_req)
 
         sheet_cfg: Dict[str, Any] = {
             "mapping": canon2raw,
@@ -341,6 +343,20 @@ def generate_map(path: Path, out: Path, user_map: Dict[str, str], default_immedi
             sheet_cfg["immediate"] = immediate
 
         mapping_out[sheet_name] = sheet_cfg
+
+        def bullet_list(items: List[str]) -> str:
+            if not items:
+                return "  - <none>"
+            return "\n".join(f"  - {item}" for item in items)
+
+        print(f"### Sheet `{sheet_name}`")
+        print("Missing required (pre-defaults):")
+        print(bullet_list(initial_missing_req))
+        print("Unmapped raw columns:")
+        print(bullet_list(unknown_raw))
+        print("Unused canonical columns:")
+        print(bullet_list(unused_canon))
+        print()
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(mapping_out, indent=2))
