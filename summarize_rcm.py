@@ -113,8 +113,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        default=DEFAULT_OUTPUT,
-        help="Path for the combined markdown summary (default: combined-summary.md)",
+        help="Path for the combined markdown summary (default: combined-summary.md inside the --io-dir when provided)",
     )
     parser.add_argument(
         "--io-dir",
