@@ -20,8 +20,41 @@ from pathlib import Path
 
 import pandas as pd
 
+
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sanitise_variable_name(raw: str) -> str:
+    """Convert arbitrary text into a REDCap-friendly variable identifier."""
+    cleaned = (raw or "").strip().lower()
+    if not cleaned:
+        return ""
+
+    # Replace any non-alphanumeric characters with underscores and collapse runs.
+    cleaned = re.sub(r"[^a-z0-9]+", "_", cleaned)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        return ""
+
+    # Variable names must start with a letter; prefix if necessary.
+    if not cleaned[0].isalpha():
+        cleaned = f"x_{cleaned}"
+
+    # Enforce REDCap length constraint (<=26 characters total).
+    if len(cleaned) > 26:
+        cleaned = cleaned[:26]
+        cleaned = cleaned.rstrip("_")
+        if not cleaned:
+            return ""
+        if not cleaned[0].isalpha():
+            cleaned = f"x_{cleaned}"
+            if len(cleaned) > 26:
+                cleaned = cleaned[:26].rstrip("_")
+                if not cleaned or not cleaned[0].isalpha():
+                    return ""
+
+    return cleaned
 
 def main():
     parser = argparse.ArgumentParser(
@@ -49,7 +82,7 @@ def main():
 
     report = load_json(Path(args.report_file))
 
-    ops = []
+    ops = ['CreateOutputSheet("REDCap")']
 
     # 0) Load the REDCap sheet, starting at row 2
     ops.append('ProcessSheet("REDCap", 2)')
@@ -66,14 +99,29 @@ def main():
 
         # Variable name correction
         orig_var = entry.get("Variable / Field Name", "")
-        if not VAR_RE.match(orig_var):
+        inferred_var = (entry.get("inferred_variable_name") or "").strip()
+
+        rename_emitted = False
+        if inferred_var and inferred_var != orig_var:
+            if VAR_RE.match(inferred_var):
+                ops.append(f'SetVariableName({row}, "{inferred_var}")')
+                rename_emitted = True
+            else:
+                auto_var = sanitise_variable_name(inferred_var)
+                if auto_var and VAR_RE.match(auto_var):
+                    ops.append(f'SetVariableName({row}, "{auto_var}")')
+                    rename_emitted = True
+
+        if not rename_emitted and not VAR_RE.match(orig_var):
             lowered = orig_var.lower()
             if orig_var and lowered != orig_var and VAR_RE.match(lowered):
                 ops.append(f'LowercaseVariableName({row})')
             else:
-                newvar = entry.get("inferred_variable_name", "")
-                if newvar:
-                    ops.append(f'SetVariableName({row}, "{newvar}")')
+                auto_var = sanitise_variable_name(orig_var)
+                if auto_var and VAR_RE.match(auto_var):
+                    ops.append(f'SetVariableName({row}, "{auto_var}")')
+                elif inferred_var and VAR_RE.match(inferred_var):
+                    ops.append(f'SetVariableName({row}, "{inferred_var}")')
 
         # Field type
         if inf_type:

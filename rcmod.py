@@ -47,6 +47,8 @@ class DSLExecutor:
             if allow_none:
                 return None
             self.output_df = pd.DataFrame()
+            if self.output_sheet_name is None:
+                self.output_sheet_name = 'REDCap'
 
         return self.output_df
 
@@ -70,8 +72,8 @@ class DSLExecutor:
     # --- New primitives for multi‐sheet processing ---
     #
     def CreateOutputSheet(self, sheetName):
-        """Initialize or clear the single output‐sheet buffer."""
-        self.output_sheet_name = sheetName
+        """Initialize or clear the single output-sheet buffer."""
+        self.output_sheet_name = sheetName or 'REDCap'
         self.output_df = pd.DataFrame()
 
     def ProcessSheet(self, sheetName, startRow):
@@ -376,7 +378,7 @@ def main():
     try:
         if suffix in ('.xls', '.xlsx'):
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
-                sheet = executor.output_sheet_name or 'Output'
+                sheet = executor.output_sheet_name or 'REDCap'
                 executor.output_df.to_excel(writer, sheet_name=sheet, index=False)
         elif suffix == '.csv':
             executor.output_df.to_csv(out, index=False)
