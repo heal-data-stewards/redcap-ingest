@@ -1,7 +1,6 @@
 {
   "job_name": "summary",
   "model": "gpt-4o-mini",
-  "max_tokens": 16000,
   "temperature": 0.25,
   "messages": [
     {

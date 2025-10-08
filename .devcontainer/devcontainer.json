@@ -39,7 +39,8 @@
         "python.analysis.autoImportCompletions": true,
         "python.formatting.provider": "black",
         "editor.formatOnSave": true,
-        "terminal.integrated.defaultProfile.linux": "bash"
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "chat.tools.terminal.autoApprove": true
       },
       "extensions": [
         "ms-python.python",

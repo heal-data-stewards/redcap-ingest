@@ -28,7 +28,7 @@ except Exception:
 
 import httpx
 import tiktoken
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 MAX_ROWS_PER_CHUNK = 60
 
@@ -44,6 +44,20 @@ MODEL_CONTEXT = {
     "gpt-4-32k":        32_768,
     "gpt-3.5-turbo":     16_384,
 }
+
+MODEL_COMPLETION_LIMIT = {
+    "gpt-4.1": 32_768,
+    "gpt-4.1-mini": 32_768,
+    "gpt-4.1-nano": 32_768,
+    "gpt-4o": 16_384,
+    "gpt-4o-mini": 16_384,
+    "o4": 32_768,
+    "o4-mini": 32_768,
+    "gpt-4": 8_192,
+    "gpt-4-32k": 32_768,
+    "gpt-3.5-turbo": 16_384,
+}
+
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -136,6 +150,18 @@ def count_tokens_for_model(model: str, *texts) -> int:
         if not t: continue
         total += len(enc.encode(t))
     return total
+
+def desired_response_tokens(cfg: Dict[str, Any], input_tokens: int) -> int:
+    override = cfg.get("max_tokens")
+    if override is not None:
+        return max(1, int(override))
+    base = max(1, 2 * input_tokens)
+    model = cfg.get("model", "")
+    limit = MODEL_COMPLETION_LIMIT.get(model)
+    if limit:
+        return min(base, int(limit))
+    return base
+
 
 def compute_context_limit(cfg: Dict[str, Any]) -> int:
     ctx_map = dict(MODEL_CONTEXT)
@@ -242,7 +268,6 @@ def estimate_need_for_chunks(cfg: Dict[str, Any],
                              ctx_limit: int,
                              byte_limit: int) -> tuple[int, list[int], list[int]]:
     model = cfg.get("model","")
-    max_out = int(cfg.get("max_tokens", 0))
     base_in = sum(count_tokens_for_model(model, m["content"]) for m in base_messages)
     base_bytes = sum(len(m["content"].encode("utf-8")) for m in base_messages)
     pcm = cfg.get("per_chunk_message") or {}
@@ -257,7 +282,8 @@ def estimate_need_for_chunks(cfg: Dict[str, Any],
             body = "\n".join(map(str, bucket))
         payload = hdr + body + ftr
         in_tokens = base_in + count_tokens_for_model(model, payload)
-        need = in_tokens + max_out
+        out_tokens = desired_response_tokens(cfg, in_tokens)
+        need = in_tokens + out_tokens
         worst = max(worst, need)
         per_chunk_tokens.append(in_tokens)
         per_chunk_bytes.append(base_bytes + len(payload.encode('utf-8')))
@@ -326,6 +352,33 @@ def call_openai(client: OpenAI, model: str, messages: List[Dict[str,str]],
     resp = client.chat.completions.create(**kwargs)
     choice = resp.choices[0]
     return choice.message.content
+
+
+
+def extract_error_message(exc: BadRequestError) -> str:
+    detail = getattr(exc, "message", "") or str(exc)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            detail = data.get("error", {}).get("message", detail)
+    return detail
+
+
+
+def request_with_handling(client: OpenAI, model: str, messages: List[Dict[str,str]],
+                          temperature: float, max_tokens: int,
+                          response_format: Optional[Dict[str,Any]],
+                          description: str) -> str:
+    try:
+        return call_openai(client, model, messages, temperature, max_tokens, response_format)
+    except BadRequestError as exc:
+        detail = extract_error_message(exc)
+        logging.error(f"OpenAI API error during {description}: {detail} (requested max_tokens={max_tokens})")
+        sys.exit(1)
 
 
 
@@ -443,7 +496,6 @@ def main():
 
     model = cfg.get("model","gpt-4o-mini")
     temperature = float(cfg.get("temperature", 0))
-    max_tokens = int(cfg.get("max_tokens", 16000))
 
     derived = derive_output_settings(cfg)
     response_format = derived["response_format"]
@@ -489,6 +541,8 @@ def main():
         bytes_per_chunk = [base_bytes]
         logging.info("No source provided; sending only base messages.")
 
+    response_tokens = [desired_response_tokens(cfg, tok) for tok in tokens_per_chunk]
+
     chunk_batches: List[Any] = []
     chunk_lengths: List[int] = []
     if source_data:
@@ -498,23 +552,25 @@ def main():
         chunk_lengths = []
 
     def print_budget(chosen_chunks: int):
-        if not tokens_per_chunk:
+        if not tokens_per_chunk or not response_tokens:
             return
         if chosen_chunks <= 1:
             base_in = tokens_per_chunk[0]
-            need = base_in + max_tokens
+            max_out = response_tokens[0]
+            need = base_in + max_out
             row_info = f", rows={chunk_lengths[0]}" if chunk_lengths else ""
             print(
-                f"FULL submission: input={base_in}, bytes={bytes_per_chunk[0]}, max_output={max_tokens}, "
+                f"FULL submission: input={base_in}, bytes={bytes_per_chunk[0]}, max_output={max_out}, "
                 f"total_needed={need}, context={ctx_limit}{row_info}"
             )
         else:
-            totals = [tok + max_tokens for tok in tokens_per_chunk]
-            worst = max(totals)
+            totals = [tok + resp for tok, resp in zip(tokens_per_chunk, response_tokens)]
+            worst = max(totals) if totals else 0
             print(f"Chunks={chosen_chunks} worst-case needed={worst}, context={ctx_limit}")
             for idx, (tok, byt, tot) in enumerate(zip(tokens_per_chunk, bytes_per_chunk, totals), start=1):
+                max_out = response_tokens[idx-1] if idx-1 < len(response_tokens) else 0
                 row_info = f", rows={chunk_lengths[idx-1]}" if chunk_lengths and idx-1 < len(chunk_lengths) else ""
-                print(f"  chunk {idx:2d}: tokens={tok:6d}, bytes={byt:6d}, total_needed={tot:6d}{row_info}")
+                print(f"  chunk {idx:2d}: tokens={tok:6d}, bytes={byt:6d}, max_output={max_out:6d}, total_needed={tot:6d}{row_info}")
 
     print_budget(chosen)
     if cfg.get("dry_run"):
@@ -526,7 +582,8 @@ def main():
 
     if not source_data:
         messages = list(base_messages)
-        raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
+        chunk_max_tokens = response_tokens[0] if response_tokens else desired_response_tokens(cfg, base_tokens_total)
+        raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, "full submission")
         outputs.append(aggregate_piece(raw, parse_json))
     elif chosen <= 1:
         messages = list(base_messages)
@@ -539,7 +596,8 @@ def main():
         else:
             body = "\n".join(map(str, bucket))
         messages.append({"role": role, "content": hdr + body + ftr})
-        raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
+        chunk_max_tokens = response_tokens[0] if response_tokens else desired_response_tokens(cfg, tokens_per_chunk[0] if tokens_per_chunk else base_tokens_total)
+        raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, "single chunk submission")
         outputs.append(aggregate_piece(raw, parse_json))
     else:
         pcm = cfg.get("per_chunk_message") or {}
@@ -555,8 +613,13 @@ def main():
             tok = tokens_per_chunk[idx-1] if idx-1 < len(tokens_per_chunk) else '?'
             byt = bytes_per_chunk[idx-1] if idx-1 < len(bytes_per_chunk) else '?'
             rows = len(bucket) if isinstance(bucket, (list, tuple)) else 'n/a'
-            print(f"Submitting chunk {idx}/{len(chunk_batches)}: rows={rows}, tokens={tok}, bytes={byt}")
-            raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
+            if isinstance(tok, int):
+                chunk_max_tokens = response_tokens[idx-1] if idx-1 < len(response_tokens) else desired_response_tokens(cfg, tok)
+            else:
+                chunk_max_tokens = desired_response_tokens(cfg, 0)
+            print(f"Submitting chunk {idx}/{len(chunk_batches)}: rows={rows}, tokens={tok}, bytes={byt}, max_tokens={chunk_max_tokens}")
+            description = f"chunk {idx}/{len(chunk_batches)}"
+            raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, description)
             outputs.append(aggregate_piece(raw, parse_json))
 
     default_ext = derived["default_ext"]
