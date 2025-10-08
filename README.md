@@ -180,8 +180,9 @@ Runs `llm_submit.py` for each supplied DSL (`*.rcm`) file and concatenates the
 stage summaries into a single markdown report.
 
 ```text
-usage: summarize_rcm.py [-h] [--config CONFIG] [--output OUTPUT]
-                        [--io-dir IO_DIR]
+usage: summarize_rcm.py [-h] [--config CONFIG] [--rollup-config ROLLUP_CONFIG]
+                        [--output OUTPUT] [--io-dir IO_DIR]
+                        [--key-file KEY_FILE]
                         rcm_files [rcm_files ...]
 
 Generate an aggregated summary for multiple RCM files.
@@ -192,18 +193,46 @@ positional arguments:
 
 options:
   -h, --help           show this help message and exit
-  --config CONFIG      Path to llm_submit job config (default:
-                        job_summary.json)
+  --config CONFIG      Path to llm_submit job config (default: job_summary.json)
+  --rollup-config ROLLUP_CONFIG
+                        Path to llm_submit job config for the rollup stage
+                        (default: job_summary_rollup.json)
   --output OUTPUT      Path for the combined markdown summary (default:
-                        combined-summary.md)
-  --io-dir IO_DIR      Override llm_submit --io-dir (defaults to current
-                        working directory)
+                        combined-summary.md inside --io-dir when provided)
+  --io-dir IO_DIR      Override llm_submit --io-dir (defaults to current working
+                        directory)
+  --key-file KEY_FILE  Path to OpenAI API key file to pass through to llm_submit
 ```
 
 Example:
 ```
 python summarize_rcm.py stage1.rcm fixes/stage2.rcm \
   --output pipeline-summary.md
+```
+
+### split_forms.py
+Splits the combined REDCap workbook into one workbook per form based on the
+`Form Name` column. Files are named `<basename>-<form>.xlsx` and created only
+when more than one form exists.
+
+```text
+usage: split_forms.py [-h] [--output-dir OUTPUT_DIR] input
+
+Split REDCap dictionary by form
+
+positional arguments:
+  input                 Path to the consolidated REDCap workbook
+
+options:
+  -h, --help            show this help message and exit
+  --output-dir OUTPUT_DIR
+                        Directory to write per-form workbooks (defaults to
+                        input directory)
+```
+
+Example:
+```
+python split_forms.py data/CTN0095A1/CTN0095A1-reformatted.xlsx
 ```
 
 ### redcap_lint.py
@@ -309,12 +338,11 @@ python llm_submit.py --config job_summary.json --source stage2.ops --io-dir tmp
   from the host; replicate this locally as needed.
 
 ## File / Repo Layout
-- `map.py`, `redcap_format.py`, `reformat.py`, `rcmod.py`: structural mapping tools.
+- `map.py`, `redcap_format.py`, `reformat.py`, `rcmod.py`, `split_forms.py`: structural mapping tools.
 - `redcap_lint.py`, `fix.py`: linting and DSL generation for content fixes.
 - `llm_submit.py`, `infer_submit.py`: LLM submission tooling.
 - `job_*.json`, `infer_prompt.md`, `summary.md`, `summary_rollup.md`,
   `system_invariants_*.md`: prompt definitions and job presets.
-  prompt definitions and job presets.
 - `redcap_reference.md`, `map_file_format.md`, `redcap_convert_dsl.md`:
   reference documentation for REDCap columns and DSL primitives.
 - `.devcontainer/`: Python 3.11 container definition (Debian Bookworm).
