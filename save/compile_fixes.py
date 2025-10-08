@@ -100,7 +100,7 @@ def main():
             ops.append(f'SetFormName({row_idx}, "{form_value}")')
 
     # 4) Row-level fixes
-    VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
+    VAR_RE = re.compile(fr'^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$')
     for entry in report:
         row = entry.get("line")
         inf_type = entry.get("inferred_field_type")

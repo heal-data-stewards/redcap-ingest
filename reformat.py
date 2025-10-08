@@ -47,8 +47,10 @@ OPT = [
 ]
 ALL = REQ + OPT
 
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
 # ――――――――――――――――― helper: load a sheet & find header row ――――――――――――――――
-VAR_RE = re.compile(r"^[a-z][a-z0-9_]{0,25}$")
+VAR_RE = re.compile(fr"^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$")
 
 def find_header_row(df0: pd.DataFrame, header_guess: int = 20) -> int:
     """

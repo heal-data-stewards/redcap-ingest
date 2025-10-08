@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
 
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -41,16 +43,16 @@ def sanitise_variable_name(raw: str) -> str:
     if not cleaned[0].isalpha():
         cleaned = f"x_{cleaned}"
 
-    # Enforce REDCap length constraint (<=26 characters total).
-    if len(cleaned) > 26:
-        cleaned = cleaned[:26]
+    # Enforce REDCap length constraint (<= MAX_VAR_NAME_LEN characters total).
+    if len(cleaned) > MAX_VAR_NAME_LEN:
+        cleaned = cleaned[:MAX_VAR_NAME_LEN]
         cleaned = cleaned.rstrip("_")
         if not cleaned:
             return ""
         if not cleaned[0].isalpha():
             cleaned = f"x_{cleaned}"
-            if len(cleaned) > 26:
-                cleaned = cleaned[:26].rstrip("_")
+            if len(cleaned) > MAX_VAR_NAME_LEN:
+                cleaned = cleaned[:MAX_VAR_NAME_LEN].rstrip("_")
                 if not cleaned or not cleaned[0].isalpha():
                     return ""
 
@@ -91,7 +93,7 @@ def main():
     ops.append('EnsureColumn("Section Header")')
 
     # 2) Row-level fixes based on your augmented report
-    VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
+    VAR_RE = re.compile(fr'^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$')
     for entry in report:
         row = entry.get("line")
         inf_type = entry.get("inferred_field_type")
@@ -100,28 +102,53 @@ def main():
         # Variable name correction
         orig_var = entry.get("Variable / Field Name", "")
         inferred_var = (entry.get("inferred_variable_name") or "").strip()
+        classification = entry.get("classification") or {}
+        raw_errors = classification.get("errors")
+        if raw_errors is None:
+            error_text = classification.get("error")
+            if error_text:
+                raw_errors = [part.strip() for part in error_text.split(";") if part.strip()]
+            else:
+                raw_errors = []
+        issues_lower = [str(err).lower() for err in (raw_errors or []) if err]
+        needs_invalid = any("invalid variable name" in err for err in issues_lower)
+        needs_duplicate = any("duplicate variable name" in err for err in issues_lower)
+
+        def emit_variable_name(candidate: str) -> bool:
+            candidate = (candidate or "").strip()
+            if not candidate:
+                return False
+            if VAR_RE.match(candidate):
+                ops.append(f'SetVariableName({row}, "{candidate}")')
+                return True
+            cleaned = sanitise_variable_name(candidate)
+            if cleaned and VAR_RE.match(cleaned):
+                ops.append(f'SetVariableName({row}, "{cleaned}")')
+                return True
+            return False
 
         rename_emitted = False
-        if inferred_var and inferred_var != orig_var:
-            if VAR_RE.match(inferred_var):
-                ops.append(f'SetVariableName({row}, "{inferred_var}")')
-                rename_emitted = True
-            else:
-                auto_var = sanitise_variable_name(inferred_var)
-                if auto_var and VAR_RE.match(auto_var):
-                    ops.append(f'SetVariableName({row}, "{auto_var}")')
-                    rename_emitted = True
+        if inferred_var and (inferred_var != orig_var or needs_invalid or needs_duplicate):
+            rename_emitted = emit_variable_name(inferred_var)
 
         if not rename_emitted and not VAR_RE.match(orig_var):
             lowered = orig_var.lower()
             if orig_var and lowered != orig_var and VAR_RE.match(lowered):
                 ops.append(f'LowercaseVariableName({row})')
+                rename_emitted = True
             else:
-                auto_var = sanitise_variable_name(orig_var)
-                if auto_var and VAR_RE.match(auto_var):
-                    ops.append(f'SetVariableName({row}, "{auto_var}")')
-                elif inferred_var and VAR_RE.match(inferred_var):
-                    ops.append(f'SetVariableName({row}, "{inferred_var}")')
+                rename_emitted = emit_variable_name(orig_var)
+
+        if not rename_emitted and needs_invalid:
+            rename_emitted = emit_variable_name(orig_var)
+            if not rename_emitted and inferred_var:
+                rename_emitted = emit_variable_name(inferred_var)
+
+        if not rename_emitted and needs_duplicate:
+            candidate = inferred_var or orig_var
+            rename_emitted = emit_variable_name(candidate)
+            if not rename_emitted and candidate != orig_var:
+                rename_emitted = emit_variable_name(orig_var)
 
         # Field type
         if inf_type:

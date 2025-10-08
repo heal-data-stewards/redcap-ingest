@@ -15,7 +15,7 @@ two JSON files:
 2. **report.json** – an array of objects, one per line of the original
    sheet. Each object has:
    - `line`: the original sheet row number
-   - `classification`: `{ "valid": <bool>, "error": <string|null> }`
+   - `classification`: `{ "valid": <bool>, "errors": [<string>, ...], "error": <string|null> }`
    - the raw source values for:
      - `Variable / Field Name`
      - `Form Name`
@@ -103,9 +103,10 @@ For each entry in `report.json`:
 ## Rules
 
 - Always fix rows where `"classification.valid"` is `false`.
+- Review every entry in `"classification.errors"`; rows may report multiple issues that all need corrections.
 - Every `"Variable / Field Name"` in the output must be a valid REDCap
-  identifier: lowercase, 1–26 characters, start with a letter, and only
-  contain letters, digits, or underscores. If the input value violates
+  identifier: lowercase, 1–100 characters, start with a letter, and only
+  contain letters, digits, or underscores (≤26 recommended for readability). If the input value violates
   the rules, rewrite it into a compliant identifier (e.g. replace spaces
   with underscores, drop punctuation, prefix with a letter if needed).
 - If `"Choices, Calculations, OR Slider Labels"` has exactly two

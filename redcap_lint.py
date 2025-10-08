@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-redcap_lint.py – v0.15
+redcap_lint.py – v0.16
 ~~~~~~~~~~~~~~~~~~~~~~
 Lint a REDCap data-dictionary that already uses canonical REDCap headers.
 
@@ -57,7 +57,10 @@ FIELD_TYPES: Set[str] = {
     "yesno", "truefalse", "slider", "descriptive", "date", "datetime",
 }
 
-VAR_RE = re.compile(r"^[a-z][a-z0-9_]{0,25}$")
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
+
+VAR_RE = re.compile(fr"^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$")
 CHOICE_COL = "Choices, Calculations, OR Slider Labels"
 _VALIDATION_TYPES = {
     "integer", "number", "date_mdy", "date_dmy", "time",
@@ -108,12 +111,17 @@ def lint_dataframe(df: pd.DataFrame) -> List[Dict[str, Any]]:
     for i, row in df.iterrows():
         cls, why = classify_row(row, seen)
         valid = cls == "ACCEPT"
+        errors = [] if valid else list(why)
         error = None if valid else "; ".join(why)
 
         records.append(
             {
                 "line": i + 2,  # +2 because Excel rows are 1-indexed and header is row 1
-                "classification": {"valid": valid, "error": error},
+                "classification": {
+                    "valid": valid,
+                    "errors": errors,
+                    "error": error,
+                },
                 "Variable / Field Name": row.get("Variable / Field Name", ""),
                 "Form Name": row.get("Form Name", ""),
                 "Field Type": row.get("Field Type", ""),

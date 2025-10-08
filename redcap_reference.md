@@ -9,7 +9,7 @@ transformations.
 All REDCap dictionaries **must** include these four columns:
 
 1. **Variable / Field Name**  
-   - Lowercase letters, numbers, or underscores; must start with a letter; max 26 chars.  
+   - Lowercase letters, numbers, or underscores; must start with a letter; max 100 chars (≤26 recommended).  
 2. **Form Name**  
    - Name of the form or instrument.  
 3. **Field Type**  

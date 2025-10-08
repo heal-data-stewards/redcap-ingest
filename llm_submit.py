@@ -543,6 +543,19 @@ def main():
 
     response_tokens = [desired_response_tokens(cfg, tok) for tok in tokens_per_chunk]
 
+    def ensure_chunk_size(parsed_chunk: Any, expected_count: int | None, context: str) -> None:
+        if not parse_json:
+            return
+        if expected_count is None:
+            return
+        if not isinstance(parsed_chunk, list):
+            logging.error(f"{context}: expected JSON array of length {expected_count}, received {type(parsed_chunk).__name__}")
+            sys.exit(1)
+        actual = len(parsed_chunk)
+        if actual != expected_count:
+            logging.error(f"{context}: expected {expected_count} items, received {actual}")
+            sys.exit(1)
+
     chunk_batches: List[Any] = []
     chunk_lengths: List[int] = []
     if source_data:
@@ -584,7 +597,8 @@ def main():
         messages = list(base_messages)
         chunk_max_tokens = response_tokens[0] if response_tokens else desired_response_tokens(cfg, base_tokens_total)
         raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, "full submission")
-        outputs.append(aggregate_piece(raw, parse_json))
+        chunk_result = aggregate_piece(raw, parse_json)
+        outputs.append(chunk_result)
     elif chosen <= 1:
         messages = list(base_messages)
         pcm = cfg.get("per_chunk_message") or {}
@@ -598,7 +612,10 @@ def main():
         messages.append({"role": role, "content": hdr + body + ftr})
         chunk_max_tokens = response_tokens[0] if response_tokens else desired_response_tokens(cfg, tokens_per_chunk[0] if tokens_per_chunk else base_tokens_total)
         raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, "single chunk submission")
-        outputs.append(aggregate_piece(raw, parse_json))
+        chunk_result = aggregate_piece(raw, parse_json)
+        expected = chunk_lengths[0] if chunk_lengths else None
+        ensure_chunk_size(chunk_result, expected, "single chunk submission")
+        outputs.append(chunk_result)
     else:
         pcm = cfg.get("per_chunk_message") or {}
         hdr = pcm.get("header",""); ftr = pcm.get("footer","")
@@ -620,7 +637,25 @@ def main():
             print(f"Submitting chunk {idx}/{len(chunk_batches)}: rows={rows}, tokens={tok}, bytes={byt}, max_tokens={chunk_max_tokens}")
             description = f"chunk {idx}/{len(chunk_batches)}"
             raw = request_with_handling(client, model, messages, temperature, chunk_max_tokens, response_format, description)
-            outputs.append(aggregate_piece(raw, parse_json))
+            chunk_result = aggregate_piece(raw, parse_json)
+            expected = chunk_lengths[idx-1] if idx-1 < len(chunk_lengths) else None
+            ensure_chunk_size(chunk_result, expected, description)
+            outputs.append(chunk_result)
+
+    if source_data and parse_json:
+        expected_total: int | None = None
+        if isinstance(source_data, (list, tuple)):
+            expected_total = len(source_data)
+        if expected_total is not None:
+            actual_total = 0
+            for idx, piece in enumerate(outputs, start=1):
+                if not isinstance(piece, list):
+                    logging.error(f"chunk {idx}: expected JSON array, received {type(piece).__name__}")
+                    sys.exit(1)
+                actual_total += len(piece)
+            if actual_total != expected_total:
+                logging.error(f"Combined chunk output length mismatch: expected {expected_total}, received {actual_total}")
+                sys.exit(1)
 
     default_ext = derived["default_ext"]
     out_path = format_output_path(cfg, derived)

@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
+VAR_RE = re.compile(fr'^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$')
 
 
 def parse_args():
