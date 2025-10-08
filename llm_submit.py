@@ -17,6 +17,7 @@ Changes in this build:
 - Output templates can use {srcbase} and {srcstem}.
 """
 import argparse, json, logging, os, sys, time, uuid
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,8 @@ except Exception:
 import httpx
 import tiktoken
 from openai import OpenAI
+
+MAX_ROWS_PER_CHUNK = 60
 
 MODEL_CONTEXT = {
     "gpt-4.1":        1_000_000,
@@ -235,34 +238,56 @@ def derive_output_settings(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def estimate_need_for_chunks(cfg: Dict[str, Any],
                              base_messages: List[Dict[str, str]],
                              chunk_data: List[Any],
-                             try_chunks: int) -> int:
+                             try_chunks: int,
+                             ctx_limit: int,
+                             byte_limit: int) -> tuple[int, list[int], list[int]]:
     model = cfg.get("model","")
     max_out = int(cfg.get("max_tokens", 0))
     base_in = sum(count_tokens_for_model(model, m["content"]) for m in base_messages)
+    base_bytes = sum(len(m["content"].encode("utf-8")) for m in base_messages)
     pcm = cfg.get("per_chunk_message") or {}
     hdr = pcm.get("header",""); ftr = pcm.get("footer","")
     worst = 0
+    per_chunk_tokens: list[int] = []
+    per_chunk_bytes: list[int] = []
     for bucket in split_into_chunks(chunk_data, try_chunks):
         if isinstance(bucket, list) and bucket and isinstance(bucket[0], (dict, list)):
             body = json.dumps(bucket)
         else:
             body = "\n".join(map(str, bucket))
-        in_tokens = base_in + count_tokens_for_model(model, hdr + body + ftr)
+        payload = hdr + body + ftr
+        in_tokens = base_in + count_tokens_for_model(model, payload)
         need = in_tokens + max_out
         worst = max(worst, need)
-    return worst
+        per_chunk_tokens.append(in_tokens)
+        per_chunk_bytes.append(base_bytes + len(payload.encode('utf-8')))
+    return worst, per_chunk_tokens, per_chunk_bytes
+
 
 def choose_auto_chunks(cfg: Dict[str, Any],
                        base_messages: List[Dict[str, str]],
                        chunk_data: List[Any],
-                       ctx_limit: int) -> int:
+                       ctx_limit: int,
+                       byte_limit: int) -> tuple[int, list[int], list[int]]:
     MIN_C = 1
     MAX_C = 64
+    latest_tokens: list[int] = []
+    latest_bytes: list[int] = []
     for c in range(MIN_C, MAX_C + 1):
-        worst = estimate_need_for_chunks(cfg, base_messages, chunk_data, c)
-        if worst <= ctx_limit:
-            return c
-    return MAX_C + 1
+        worst, token_breakdown, byte_breakdown = estimate_need_for_chunks(
+            cfg, base_messages, chunk_data, c, ctx_limit, byte_limit
+        )
+        latest_tokens = token_breakdown
+        latest_bytes = byte_breakdown
+        if worst <= ctx_limit and all(b <= byte_limit for b in byte_breakdown):
+            return c, token_breakdown, byte_breakdown
+    return MAX_C + 1, latest_tokens, latest_bytes
+
+
+
+
+
+
 
 def format_output_path(cfg: Dict[str, Any], derived: Dict[str, Any]) -> str:
     out = cfg.get("output") or {}
@@ -302,17 +327,58 @@ def call_openai(client: OpenAI, model: str, messages: List[Dict[str,str]],
     choice = resp.choices[0]
     return choice.message.content
 
+
+
+def repair_json_string(raw: str) -> str:
+    closers = {',', '}', ']', ':', '\n', '\r', ' '}
+    out = []
+    in_str = False
+    escape = False
+    for i, ch in enumerate(raw):
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == '\\':
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            if in_str:
+                next_char = raw[i + 1] if i + 1 < len(raw) else ''
+                if next_char and next_char not in closers:
+                    out.append('\"')
+                    continue
+                in_str = False
+            else:
+                in_str = True
+            out.append(ch)
+            continue
+        if ch == '\n' and in_str:
+            out.append('\n')
+            continue
+        out.append(ch)
+    return ''.join(out)
+
+
 def aggregate_piece(raw_text: str, parse_json: bool) -> Any:
+    cleaned = strip_markdown_fences(raw_text)
     if parse_json:
         try:
-            return json.loads(strip_markdown_fences(raw_text))
-        except Exception as e:
-            logging.error("Failed to parse JSON from model response:")
-            logging.error(raw_text)
-            logging.error(f"Error: {e}")
-            sys.exit(1)
-    else:
-        return strip_markdown_fences(raw_text)
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            repaired = repair_json_string(cleaned)
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError as e:
+                logging.error("Failed to parse JSON from model response:")
+                logging.error(cleaned)
+                logging.error("After repair attempt:")
+                logging.error(repaired)
+                logging.error(f"JSONDecodeError: {e}")
+                sys.exit(1)
+    return cleaned
+
 
 def combine_results(parts: List[Any], mode: str, pretty: bool) -> str:
     if mode == "json_array_concat":
@@ -385,28 +451,70 @@ def main():
     aggregate_mode = derived["aggregate_mode"]
 
     base_messages = build_messages(cfg)
+
+    print("Base message usage:")
+    base_tokens_total = 0
+    base_bytes_total = 0
+    for idx, msg in enumerate(base_messages, start=1):
+        content = msg.get("content", "")
+        role = msg.get("role", "user")
+        tok = count_tokens_for_model(model, content)
+        byt = len(content.encode("utf-8"))
+        base_tokens_total += tok
+        base_bytes_total += byt
+        print(f"  base {idx:2d} ({role}): tokens={tok}, bytes={byt}")
+    print(f"  total base: tokens={base_tokens_total}, bytes={base_bytes_total}")
+
     source_data = load_source(cfg)
 
     ctx_limit = compute_context_limit(cfg)
+    byte_limit = 65_536
+
+    tokens_per_chunk: list[int] = []
+    bytes_per_chunk: list[int] = []
 
     if source_data:
-        chosen = choose_auto_chunks(cfg, base_messages, source_data, ctx_limit)
+        chosen, tokens_per_chunk, bytes_per_chunk = choose_auto_chunks(
+            cfg, base_messages, source_data, ctx_limit, byte_limit
+        )
         if chosen == 0 or chosen > 64:
             logging.error("Input too large even at max_chunks. Reduce input or increase context.")
             sys.exit(1)
         logging.info(f"Auto-selected chunks: {chosen}")
     else:
         chosen = 1
+        base_tokens = sum(count_tokens_for_model(model, m["content"]) for m in base_messages)
+        base_bytes = sum(len(m["content"].encode("utf-8")) for m in base_messages)
+        tokens_per_chunk = [base_tokens]
+        bytes_per_chunk = [base_bytes]
         logging.info("No source provided; sending only base messages.")
 
+    chunk_batches: List[Any] = []
+    chunk_lengths: List[int] = []
+    if source_data:
+        chunk_batches = list(split_into_chunks(source_data, chosen))
+        chunk_lengths = [len(chunk) if isinstance(chunk, (list, tuple)) else 1 for chunk in chunk_batches]
+    else:
+        chunk_lengths = []
+
     def print_budget(chosen_chunks: int):
-        if not source_data or chosen_chunks <= 1:
-            base_in = sum(count_tokens_for_model(model, m["content"]) for m in base_messages)
+        if not tokens_per_chunk:
+            return
+        if chosen_chunks <= 1:
+            base_in = tokens_per_chunk[0]
             need = base_in + max_tokens
-            print(f"FULL submission: input={base_in}, max_output={max_tokens}, total_needed={need}, context={ctx_limit}")
+            row_info = f", rows={chunk_lengths[0]}" if chunk_lengths else ""
+            print(
+                f"FULL submission: input={base_in}, bytes={bytes_per_chunk[0]}, max_output={max_tokens}, "
+                f"total_needed={need}, context={ctx_limit}{row_info}"
+            )
         else:
-            worst = estimate_need_for_chunks(cfg, base_messages, source_data, chosen_chunks)
+            totals = [tok + max_tokens for tok in tokens_per_chunk]
+            worst = max(totals)
             print(f"Chunks={chosen_chunks} worst-case needed={worst}, context={ctx_limit}")
+            for idx, (tok, byt, tot) in enumerate(zip(tokens_per_chunk, bytes_per_chunk, totals), start=1):
+                row_info = f", rows={chunk_lengths[idx-1]}" if chunk_lengths and idx-1 < len(chunk_lengths) else ""
+                print(f"  chunk {idx:2d}: tokens={tok:6d}, bytes={byt:6d}, total_needed={tot:6d}{row_info}")
 
     print_budget(chosen)
     if cfg.get("dry_run"):
@@ -416,27 +524,38 @@ def main():
 
     outputs: List[Any] = []
 
-    if not source_data or chosen <= 1:
+    if not source_data:
         messages = list(base_messages)
-        if source_data:
-            pcm = cfg.get("per_chunk_message") or {}
-            hdr = pcm.get("header",""); ftr = pcm.get("footer","")
-            role = pcm.get("role","user")
-            body = json.dumps(source_data) if isinstance(source_data, list) else str(source_data)
-            messages.append({"role": role, "content": hdr + body + ftr})
+        raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
+        outputs.append(aggregate_piece(raw, parse_json))
+    elif chosen <= 1:
+        messages = list(base_messages)
+        pcm = cfg.get("per_chunk_message") or {}
+        hdr = pcm.get("header",""); ftr = pcm.get("footer","")
+        role = pcm.get("role","user")
+        bucket = chunk_batches[0] if chunk_batches else source_data
+        if isinstance(bucket, list) and bucket and isinstance(bucket[0], (dict, list)):
+            body = json.dumps(bucket)
+        else:
+            body = "\n".join(map(str, bucket))
+        messages.append({"role": role, "content": hdr + body + ftr})
         raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
         outputs.append(aggregate_piece(raw, parse_json))
     else:
         pcm = cfg.get("per_chunk_message") or {}
         hdr = pcm.get("header",""); ftr = pcm.get("footer","")
         role = pcm.get("role","user")
-        for bucket in split_into_chunks(source_data, chosen):
+        for idx, bucket in enumerate(chunk_batches, start=1):
             messages = list(base_messages)
             if isinstance(bucket, list) and bucket and isinstance(bucket[0], (dict, list)):
                 body = json.dumps(bucket)
             else:
                 body = "\n".join(map(str, bucket))
             messages.append({"role": role, "content": hdr + body + ftr})
+            tok = tokens_per_chunk[idx-1] if idx-1 < len(tokens_per_chunk) else '?'
+            byt = bytes_per_chunk[idx-1] if idx-1 < len(bytes_per_chunk) else '?'
+            rows = len(bucket) if isinstance(bucket, (list, tuple)) else 'n/a'
+            print(f"Submitting chunk {idx}/{len(chunk_batches)}: rows={rows}, tokens={tok}, bytes={byt}")
             raw = call_openai(client, model, messages, temperature, max_tokens, response_format)
             outputs.append(aggregate_piece(raw, parse_json))
 
