@@ -47,8 +47,10 @@ OPT = [
 ]
 ALL = REQ + OPT
 
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
 # ――――――――――――――――― helper: load a sheet & find header row ――――――――――――――――
-VAR_RE = re.compile(r"^[a-z][a-z0-9_]{0,25}$")
+VAR_RE = re.compile(fr"^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$")
 
 def find_header_row(df0: pd.DataFrame, header_guess: int = 20) -> int:
     """
@@ -72,8 +74,17 @@ def load_sheet(path: Path, sheet: str, start_row: int | None) -> Tuple[pd.DataFr
         raw = pd.read_csv(path, header=None, dtype=str)
     hdr_idx = (start_row-1) if start_row else find_header_row(raw)
     header = raw.iloc[hdr_idx].fillna("").astype(str).tolist()
-    data   = raw.iloc[hdr_idx+1:].fillna("")
+
+    first_data_idx = hdr_idx + 1
+    while first_data_idx < len(raw):
+        row = raw.iloc[first_data_idx]
+        if any(str(x or "").strip() for x in row):
+            break
+        first_data_idx += 1
+
+    data   = raw.iloc[first_data_idx:].fillna("")
     data.columns = header
+    data = data.reset_index(drop=True)
     return data, hdr_idx+1  # convert to 1-based as DSL expects
 
 # ――――――――――――――――――――――― DSL generation ――――――――――――――――――――――――――――
@@ -125,9 +136,8 @@ def generate_dsl(
 
         # 4) Inject immediates row-by-row
         if immed:
-            # absolute row numbers in original sheet = start_row + i
-            for i, _ in df.iterrows():
-                row_num = i + start_row + 1  # pandas index starts at 0
+            for offset, _ in enumerate(df.itertuples(index=False)):
+                row_num = start_row + offset
                 if "Form Name" in immed:
                     emit(f'SetFormName({row_num}, "{immed["Form Name"]}")', dsl)
                 for canon, val in immed.items():
@@ -146,7 +156,7 @@ def main() -> None:
     ap.add_argument(
         "--map",
         dest="map_file",
-        help="map.json produced by --generate-map (defaults to <DICT>-map.json)",
+        help="map.json produced by map.py (defaults to <DICT>-map.json)",
         required=False,
     )
     ap.add_argument(

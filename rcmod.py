@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pandas as pd
 
-VAR_RE = re.compile(r'^[a-z][a-z0-9_]{0,25}$')
+MAX_VAR_NAME_LEN = 100  # REDCap allows up to 100 characters (≤26 recommended).
+
+VAR_RE = re.compile(fr'^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$')
 
 
 def parse_args():
@@ -47,6 +49,8 @@ class DSLExecutor:
             if allow_none:
                 return None
             self.output_df = pd.DataFrame()
+            if self.output_sheet_name is None:
+                self.output_sheet_name = 'REDCap'
 
         return self.output_df
 
@@ -70,8 +74,8 @@ class DSLExecutor:
     # --- New primitives for multi‐sheet processing ---
     #
     def CreateOutputSheet(self, sheetName):
-        """Initialize or clear the single output‐sheet buffer."""
-        self.output_sheet_name = sheetName
+        """Initialize or clear the single output-sheet buffer."""
+        self.output_sheet_name = sheetName or 'REDCap'
         self.output_df = pd.DataFrame()
 
     def ProcessSheet(self, sheetName, startRow):
@@ -86,15 +90,36 @@ class DSLExecutor:
         if self.excel is None:
             raise ValueError("No Excel workbook loaded; cannot ProcessSheet")
 
-        # Load the sheet
+        # Load the sheet; start with pandas' default header handling
         df = self.excel.parse(sheetName, dtype=str).fillna('')
 
-        self.current_sheet_df = df
         try:
-            self.current_start_row_idx = int(startRow) - 2
+            start_idx = int(startRow) if startRow is not None else 2
         except ValueError:
             raise ValueError(f"Invalid startRow value: '{startRow}'. Expected an integer.")
+
+        if 'Variable / Field Name' not in df.columns:
+            raw = self.excel.parse(sheetName, header=None, dtype=str).fillna('')
+            hdr_idx = max(start_idx - 1, 0)
+            if hdr_idx >= len(raw):
+                raise ValueError(
+                    f"startRow {start_idx} exceeds sheet length for '{sheetName}'"
+                )
+            header = raw.iloc[hdr_idx].astype(str).tolist()
+            data = raw.iloc[hdr_idx + 1 :].copy()
+            df = data.fillna('')
+            df.columns = header
+
+        self.current_sheet_df = df
+        self.current_start_row_idx = start_idx - 2
         self.column_mappings = {}
+
+        # Track existing variable names so later renames remain unique
+        if 'Variable / Field Name' in df.columns:
+            for name in df['Variable / Field Name'].astype(str):
+                cleaned = (name or '').strip()
+                if cleaned:
+                    self.seen_vars.add(cleaned)
 
     def MapColumn(self, fromName, toName):
         """
@@ -164,6 +189,36 @@ class DSLExecutor:
         if 0 <= idx < len(df):
             df.at[idx, 'Variable / Field Name'] = candidate
             self.seen_vars.add(candidate)
+
+    def LowercaseVariableName(self, row):
+        df = self._active_df()
+        try:
+            idx = int(row) - 2
+        except ValueError:
+            raise ValueError(f"Invalid row value: '{row}'. Expected an integer.")
+
+        self.EnsureColumn('Variable / Field Name')
+        if not (0 <= idx < len(df)):
+            return
+
+        current = str(df.at[idx, 'Variable / Field Name'] or '')
+        lowered = current.lower()
+        if not lowered:
+            return
+
+        if not VAR_RE.match(lowered):
+            raise ValueError(
+                f"LowercaseVariableName would still violate naming rules: '{current}'"
+            )
+
+        base, suffix = lowered, 2
+        candidate = lowered
+        while candidate in self.seen_vars:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+
+        df.at[idx, 'Variable / Field Name'] = candidate
+        self.seen_vars.add(candidate)
 
     def SetFieldType(self, row, ftype):
         self.SetCell(row, 'Field Type', ftype)
@@ -339,7 +394,7 @@ def main():
     try:
         if suffix in ('.xls', '.xlsx'):
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
-                sheet = executor.output_sheet_name or 'Output'
+                sheet = executor.output_sheet_name or 'REDCap'
                 executor.output_df.to_excel(writer, sheet_name=sheet, index=False)
         elif suffix == '.csv':
             executor.output_df.to_csv(out, index=False)

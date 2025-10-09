@@ -51,7 +51,7 @@ FIELD_TYPES = {
     "yesno", "truefalse", "slider", "descriptive", "date", "datetime",
 }
 
-VAR_RE = re.compile(r"^[a-z][a-z0-9_]{0,25}$")
+VAR_RE = re.compile(fr"^[a-z][a-z0-9_]{{0,{MAX_VAR_NAME_LEN - 1}}}$")
 CHOICE_COL = "Choices, Calculations, OR Slider Labels"
 
 # ───────────────────────── synonym table

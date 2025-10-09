@@ -1,0 +1,55 @@
+{
+  "name": "redcap-ingest (Dockerfile, Py 3.11)",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  "workspaceFolder": "/workspaces/redcap-ingest",
+  "remoteUser": "vscode",
+
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false,
+      "username": "vscode",
+      "locale": "en_US.UTF-8"
+    }
+  },
+
+  "updateContentCommand": "pip install -U pip && pip install -r requirements.txt",
+
+  "postCreateCommand": "python -V && pip -V",
+
+  "mounts": [
+  ],
+
+  "containerEnv": {
+    "PYTHONUNBUFFERED": "1"
+  },
+
+  "remoteEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "OPENAI_BASE_URL": "${localEnv:OPENAI_BASE_URL}"
+  },
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.autoImportCompletions": true,
+        "python.formatting.provider": "black",
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "chat.tools.terminal.autoApprove": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff",
+        "streetsidesoftware.code-spell-checker",
+        "openai.openai"   // OpenAI VS Code extension (for “Codex”-style local use)
+      ]
+    }
+  }
+}

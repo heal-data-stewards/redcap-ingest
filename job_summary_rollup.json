@@ -1,5 +1,5 @@
 {
-  "job_name": "summary",
+  "job_name": "summary-rollup",
   "model": "gpt-4o-mini",
   "temperature": 0.25,
   "messages": [
@@ -7,19 +7,19 @@
       "role": "system",
       "from": {
         "type": "file",
-        "path": "system_invariants_summary.md"
+        "path": "system_invariants_rollup.md"
       }
     },
     {
       "role": "user",
       "from": {
         "type": "file",
-        "path": "summary.md"
+        "path": "summary_rollup.md"
       }
     },
-    { 
+    {
       "role": "user",
-      "from": { 
+      "from": {
         "type": "file",
         "path": "redcap_reference.md",
         "header": "### REDCap Reference\n"
@@ -27,13 +27,8 @@
     }
   ],
   "source_format": "text",
-  "per_chunk_message": {
-    "role": "user",
-    "header": "**DSL program starts:**\n```text\n",
-    "footer": "\n```"
-  },
   "output": {
     "format": "text",
-    "path_template": "{srcstem}-{job}.md"
+    "path_template": "summary-rollup-{ts}.md"
   }
 }

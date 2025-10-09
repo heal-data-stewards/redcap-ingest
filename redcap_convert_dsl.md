@@ -25,7 +25,13 @@ on a specific row or column.
    column, append an underscore and a numeric suffix (`_2`, `_3`, …)
    until a unique name is found.
 
-5. **SetFieldType(row, fieldType)**
+5. **LowercaseVariableName(row)**
+   Convert the existing “Variable / Field Name” in the given 1-based
+   `row` to all lowercase, ensuring the result stays unique by adding a
+   numeric suffix when needed. Raises an error if the lowercase value
+   still violates REDCap variable name rules.
+
+6. **SetFieldType(row, fieldType)**
    Overwrite the “Field Type” cell in the given 1-based `row` with
    `fieldType`, which must be one of:
    ```
@@ -33,12 +39,12 @@ on a specific row or column.
    yesno, truefalse, slider, descriptive, date, datetime
    ```
 
-6. **ClearCell(row, columnName)**
+7. **ClearCell(row, columnName)**
    Overwrite the cell at 1-based `row` in column `columnName` with
    the empty string (`""`). If `columnName` does not exist yet, it is
    first created as an empty column, and then the cell is set to `""`.
 
-7. **SetChoices(row, [ (code,label), … ])**
+8. **SetChoices(row, [ (code,label), … ])**
    Overwrite the “Choices, Calculations, OR Slider Labels” cell in the
    given 1-based `row` with a string of the form:
    ```
@@ -47,14 +53,14 @@ on a specific row or column.
    Each pair `(code,label)` is formatted as `code,label` and joined
    with `" | "`.
 
-8. **SetSlider(row, minValue, "minLabel", maxValue, "maxLabel")**
+9. **SetSlider(row, minValue, "minLabel", maxValue, "maxLabel")**
    Overwrite the “Choices, Calculations, OR Slider Labels” cell in the
    given `row` with:
    ```
    minValue,minLabel | maxValue,maxLabel
    ```
 
-9. **SetFormula(row, "formulaString")**
+10. **SetFormula(row, "formulaString")**
    Overwrite the “Choices, Calculations, OR Slider Labels” cell in the
    given `row` with the literal string
    ```
@@ -63,40 +69,40 @@ on a specific row or column.
    (usually prefixed by `calc:` if desired, but the DSL does not enforce
    a specific prefix).
 
-10. **SetFormat(row, "formatString")**
+11. **SetFormat(row, "formatString")**
     Overwrite the “Text Validation Type OR Show Slider Number” cell in
     the given `row` with `formatString` (e.g. `date_ymd` or a
     datetime pattern). If the column does not exist, it is first created.
 
-11. **SetValidation(row, "validationType", "minValue", "maxValue")**
+12. **SetValidation(row, "validationType", "minValue", "maxValue")**
     Populate three cells in the given `row`:
     - “Text Validation Type OR Show Slider Number” ← `validationType`
     - “Text Validation Min” ← `minValue`
     - “Text Validation Max” ← `maxValue`
     If any of these columns does not exist, it is first created.
 
-12. **CreateOutputSheet(sheetName)**
+13. **CreateOutputSheet(sheetName)**
     Initialize or clear the single destination sheet (`sheetName`) that
     will collect all processed rows. *Called exactly once* at script start.
     Name must be a valid sheet name
 
-13. **ProcessSheet(sheetName, startRow)**
+14. **ProcessSheet(sheetName, startRow)**
     Switch context to the source sheet `sheetName` and begin processing
     at the specified 1‑based header row (`startRow`). All subsequent
     commands apply to each data row and append directly to the output sheet.
 
-14. **MapColumn(fromName, toName)**
+15. **MapColumn(fromName, toName)**
     Record a mapping from a raw header `fromName` to a canonical header
     `toName`. This replaces the old `RenameColumn` to emphasize that
     mappings are not in‑place renames but logical associations used during
     processing.
 
-15. **DeleteRowsIfEmpty([columnName1, columnName2, …])**
+16. **DeleteRowsIfEmpty([columnName1, columnName2, …])**
     Delete any row where *any* of the listed canonical columns is blank
     or consists only of whitespace. Use this to remove rows lacking a
     variable name and/or a field label.
 
-16. **SetCell(row, columnName, value)**
+17. **SetCell(row, columnName, value)**
     A catch‑all primitive for writing a constant `value` into the cell
     at 1‑based `row` and `columnName`. Creates the column if needed.
 
